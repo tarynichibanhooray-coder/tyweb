@@ -155,12 +155,12 @@ export default function GsapGridDemo({ text = '', preset = 'calm' }) {
 
   return (
     <div style={{minHeight:260,display:'flex',alignItems:'center',justifyContent:'center'}}>
-      <div ref={containerRef} className="gsap-grid" style={{width:'100%',height:240,maxWidth:900,display:'grid',gridTemplateColumns:`repeat(${cols}, 1fr)`,gap:6,background:'#fff',padding:8,borderRadius:8}}>
+      <div ref={containerRef} className="gsap-grid" style={{width:'100%',height:240,maxWidth:900,display:'grid',gridTemplateColumns:`repeat(${cols}, 1fr)`,gridAutoRows:'1fr',gap:6,background:'#fff',padding:8,borderRadius:8}}>
         {cells.length === 0 ? (
           <div style={{gridColumn:`1 / -1`,display:'flex',alignItems:'center',justifyContent:'center'}}>Preparing grid…</div>
         ) : (
           cells.map((c,i) => (
-            <div key={i} className={"box" + (c.inside? ' inside' : '')} style={{width:'100%',height:Math.max(6, Math.floor(220/rows)),background: c.inside ? '#000' : 'rgb(220,40,60)',borderRadius:4}} />
+            <div key={i} className={"box" + (c.inside? ' inside' : '')} style={{width:'100%',aspectRatio:'1 / 1',background: c.inside ? '#000' : 'rgb(220,40,60)',borderRadius:4}} />
           ))
         )}
       </div>
