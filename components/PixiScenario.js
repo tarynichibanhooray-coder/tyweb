@@ -7,19 +7,45 @@ export default function PixiScenario({ text = '' }) {
 
   useEffect(() => {
     let mounted = true;
+    let resizeHandler = null;
+
     async function init() {
-      const PIXI = await import('pixi.js');
-      if (!mounted) return;
-      const Application = PIXI.Application;
-      const app = new Application({
-        width: containerRef.current.clientWidth,
-        height: 240,
-        backgroundAlpha: 0,
-        resolution: Math.min(window.devicePixelRatio || 1, 1.5),
-        antialias: true,
-      });
+      if (!mounted || !containerRef.current) return;
+      let mod;
+      try {
+        mod = await import('pixi.js');
+      } catch (err) {
+        console.error('Failed to import pixi.js', err);
+        return;
+      }
+      const PIXI = (mod && (mod.default ?? mod)) || mod;
+      const Application = (PIXI && (PIXI.Application ?? PIXI.default?.Application));
+      if (!Application) {
+        console.error('PIXI.Application not found on imported module', PIXI);
+        return;
+      }
+
+      // create app
+      let app;
+      try {
+        app = new Application({
+          width: containerRef.current.clientWidth || 800,
+          height: 240,
+          backgroundAlpha: 0,
+          resolution: Math.min(window.devicePixelRatio || 1, 1.5),
+          antialias: true,
+        });
+      } catch (e) {
+        console.error('Failed to create PIXI.Application', e);
+        return;
+      }
       appRef.current = app;
-      containerRef.current.appendChild(app.view);
+
+      // robust view selection (app.view may be undefined in some builds)
+      const view = app.view || (app.renderer && app.renderer.view) || document.createElement('canvas');
+      if (view && !containerRef.current.contains(view)) {
+        containerRef.current.appendChild(view);
+      }
 
       const style = new PIXI.TextStyle({
         fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
@@ -28,49 +54,58 @@ export default function PixiScenario({ text = '' }) {
       });
       const pixiText = new PIXI.Text(text, style);
       pixiText.anchor.set(0.5);
-      pixiText.x = app.view.width/2; pixiText.y = app.view.height/2;
+      pixiText.x = (app.view?.width || containerRef.current.clientWidth || 800) / 2;
+      pixiText.y = (app.view?.height || 240) / 2;
       app.stage.addChild(pixiText);
 
-      // simple floating animation
-      app.ticker.add((dt) => {
-        pixiText.y = app.view.height/2 + Math.sin(performance.now()/500) * 6;
+      app.ticker.add(() => {
+        pixiText.y = (app.view?.height || 240) / 2 + Math.sin(performance.now() / 500) * 6;
       });
 
-      // simple pointer interaction: scale on pointerdown
-      app.view.style.touchAction = 'manipulation';
-      app.view.addEventListener('pointerdown', () => {
-        pixiText.scale.set(0.98);
-        setTimeout(() => pixiText.scale.set(1), 120);
-      });
-
-      // resize handler
-      function onResize() {
-        app.renderer.resize(containerRef.current.clientWidth, 240);
-        pixiText.x = app.view.width/2;
-        pixiText.y = app.view.height/2;
+      if (view) {
+        view.style.touchAction = 'manipulation';
+        view.addEventListener('pointerdown', () => {
+          pixiText.scale.set(0.98);
+          setTimeout(() => pixiText.scale.set(1), 120);
+        });
       }
-      window.addEventListener('resize', onResize);
 
+      resizeHandler = () => {
+        if (!containerRef.current) return;
+        const w = containerRef.current.clientWidth;
+        if (app.renderer && typeof app.renderer.resize === 'function') {
+          app.renderer.resize(w, 240);
+        }
+        pixiText.x = (app.view?.width || w) / 2;
+        pixiText.y = (app.view?.height || 240) / 2;
+      };
+      window.addEventListener('resize', resizeHandler);
     }
+
     init();
+
     return () => {
       mounted = false;
+      if (resizeHandler) window.removeEventListener('resize', resizeHandler);
       if (appRef.current) {
-        appRef.current.destroy(true, { children: true });
+        try {
+          appRef.current.destroy(true, { children: true });
+        } catch (e) {
+          // ignore
+        }
         appRef.current = null;
       }
     };
   }, []);
 
-  // update text content when prop changes
   useEffect(() => {
-    if (appRef.current && appRef.current.stage.children.length) {
+    if (appRef.current && appRef.current.stage && appRef.current.stage.children.length) {
       const child = appRef.current.stage.children[0];
-      if (child && child.text !== undefined) child.text = text;
+      if (child && typeof child.text !== 'undefined') child.text = text;
     }
   }, [text]);
 
   return (
-    <div ref={containerRef} style={{minHeight:260,display:'flex',alignItems:'center',justifyContent:'center'}} />
+    <div ref={containerRef} style={{ minHeight: 260, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
   );
 }
