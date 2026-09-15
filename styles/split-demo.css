@@ -1,8 +1,38 @@
-/* per-char styling and will-change hints */
-.st-char {
+/* split-demo.css - enhanced styles for scenarios */
+
+.split-output .st-char {
   display: inline-block;
-  transform-origin: center;
   will-change: transform, opacity;
-  margin-right: -0.01em;
-  font-variant-ligatures: none; /* disable ligatures so split chars match glyphs */
+  padding: 0 1px;
+}
+
+.seg-btn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: #fff;
+  color: #061226;
+}
+.seg-btn.active {
+  background: linear-gradient(90deg,#08203a,#0b3150);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(3,7,18,0.12);
+}
+
+.mini-btn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.06);
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+}
+.mini-btn.active {
+  background: #061226;
+  color: #fff;
+}
+
+/* small responsive tweaks */
+@media (max-width:640px){
+  .split-output { font-size:28px !important }
 }
