@@ -25,7 +25,7 @@ export default function GsapGridDemo({ text = '', preset = 'calm' }) {
     const { cssW, cssH, c, r } = measure();
     setCols(c); setRows(r);
 
-    // offscreen canvas for sampling the word 'go'
+    // offscreen canvas for sampling the provided text
     const off = document.createElement('canvas');
     const offCtx = off.getContext && off.getContext('2d');
     if (!offCtx) {
@@ -41,7 +41,11 @@ export default function GsapGridDemo({ text = '', preset = 'calm' }) {
     off.width = W; off.height = H;
     offCtx.clearRect(0,0,W,H);
 
-    const displayText = 'go';
+    // use provided text (trimmed, limited length) or default to 'go'
+    let displayText = (text && text.trim().length > 0) ? text.trim() : 'go';
+    // limit to reasonable length so sampling remains useful
+    displayText = displayText.slice(0, 12);
+
     const fontSize = Math.floor(H * 0.7);
     offCtx.font = `bold ${fontSize}px system-ui, sans-serif`;
     offCtx.fillStyle = '#000';
