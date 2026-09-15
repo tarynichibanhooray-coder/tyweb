@@ -63,3 +63,6 @@ credentials.json
 
 # Keep .env.example in repo as a template
 !.env.example
+
+# Supabase CLI temporary files
+supabase/.temp/
