@@ -5,198 +5,296 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
   const canvasRef = useRef(null);
   const particlesRef = useRef([]);
   const rafRef = useRef(null);
-  const pointerRef = useRef({ x: -9999, y: -9999, down: false });
+  const sizeRef = useRef({ w: 600, h: 240 });
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext && canvas.getContext('2d');
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // measure CSS size reliably
-    function measure() {
-      const rect = canvas.getBoundingClientRect();
-      const cssW = rect.width || canvas.clientWidth || 600;
-      const cssH = rect.height || canvas.clientHeight || 240;
-      return { cssW, cssH };
-    }
+    let dpr = Math.max(1, window.devicePixelRatio || 1);
 
-    let { cssW, cssH } = measure();
-
-    let DPR = Math.min(window.devicePixelRatio || 1, 1.5);
     function resize() {
-      const m = measure();
-      cssW = m.cssW; cssH = m.cssH;
-      canvas.width = Math.max(1, Math.floor(cssW * DPR));
-      canvas.height = Math.max(1, Math.floor(cssH * DPR));
-      // make drawing use CSS pixels
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(300, rect.width || 600);
+      const h = Math.max(120, rect.height || 240);
+      sizeRef.current = { w, h };
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-    resize();
-    window.addEventListener('resize', resize);
 
-    // draw text to offscreen canvas and sample. Use a higher-res sampling to detect glyphs reliably
-    const off = document.createElement('canvas');
-    const offCtx = off.getContext && off.getContext('2d');
-    if (!offCtx) {
-      // fallback: create some simple particles
-      particlesRef.current = [{ x: cssW / 2, y: cssH / 2, ox: cssW / 2, oy: cssH / 2, vx: 0, vy: 0, inside: true }];
-    } else {
-      // increase offscreen size to improve sampling fidelity
-      const w = Math.max(480, Math.floor(cssW * 1.2));
-      const h = Math.max(160, Math.floor(cssH * 1.2));
-      off.width = w; off.height = h;
-      offCtx.clearRect(0,0,w,h);
-      // force the displayed word to 'stop'
-      const displayText = 'stop';
-      // choose a large font so glyphs have enough pixels
-      const fontSize = Math.floor(h * 0.72);
+    let running = true;
+    resize();
+
+    // particle constructor
+    function makeParticle(x, y, color) {
+      return {
+        x: Math.random() * sizeRef.current.w,
+        y: Math.random() * sizeRef.current.h,
+        tx: x,
+        ty: y,
+        vx: 0,
+        vy: 0,
+        color,
+        size: Math.max(2, Math.round(Math.min(6, Math.random() * 4 + 1)))
+      };
+    }
+
+    function buildTargetsFromText(displayText) {
+      const { w, h } = sizeRef.current;
+      const off = document.createElement('canvas');
+      const offCtx = off.getContext && off.getContext('2d');
+      if (!offCtx) return [];
+
+      // sample resolution depends on width
+      const sample = Math.max(6, Math.round(w / 80));
+      const W = Math.max(200, Math.round(w / sample));
+      const H = Math.max(60, Math.round(h / sample));
+      off.width = W;
+      off.height = H;
+      offCtx.clearRect(0, 0, W, H);
+
+      const fontSize = Math.floor(H * 0.7);
       offCtx.font = `bold ${fontSize}px system-ui, sans-serif`;
       offCtx.fillStyle = '#000';
       offCtx.textBaseline = 'middle';
       offCtx.textAlign = 'center';
-      offCtx.fillText(displayText, w/2, h/2);
+      offCtx.fillText(displayText, W / 2, H / 2);
 
       let img;
-      try {
-        img = offCtx.getImageData(0,0,w,h).data;
-      } catch (e) {
-        img = null;
-      }
+      try { img = offCtx.getImageData(0, 0, W, H).data; } catch (e) { img = null; }
 
-      const textPoints = [];
+      const targets = [];
       if (img) {
-        // finer sampling so we capture shape
-        const step = preset === 'chaotic' ? 3 : 4;
-        for (let y=0;y<h;y+=step){
-          for (let x=0;x<w;x+=step){
-            const idx = (y*w + x)*4;
-            // check alpha channel or luminance to see if pixel is filled
-            const alpha = img[idx+3];
-            const lum = img[idx] + img[idx+1] + img[idx+2];
-            if (alpha > 10 || lum > 30) {
-              // map to CSS pixels space
-              textPoints.push({x: x/w*cssW, y: y/h*cssH});
+        for (let yy = 0; yy < H; yy++) {
+          for (let xx = 0; xx < W; xx++) {
+            const idx = (yy * W + xx) * 4;
+            const alpha = img[idx + 3];
+            const lum = img[idx] + img[idx + 1] + img[idx + 2];
+            const inside = alpha > 10 || lum > 30;
+            if (inside) {
+              // map back to canvas coords
+              const cx = (xx / W) * w;
+              const cy = (yy / H) * h;
+              targets.push({ x: cx, y: cy, inside });
             }
           }
         }
       }
 
-      // fallback if sampling produced nothing
-      if (textPoints.length === 0) {
-        // create a small centered word-shaped fallback: a few clustered points
-        for (let i=0;i<240;i++){
-          textPoints.push({ x: cssW/2 + (Math.random()-0.5)*140, y: cssH/2 + (Math.random()-0.5)*56 });
-        }
-      }
-
-      // create ambient red dots around the canvas, avoiding overlapping text points
-      const ambient = [];
-      const ambientCount = Math.max(200, Math.floor((cssW*cssH)/8000));
-      const minDist = 12; // minimum distance from text points
-      for (let i=0;i<ambientCount;i++){
-        let tries = 0;
-        while (tries < 14) {
-          const rx = Math.random()*cssW;
-          const ry = Math.random()*cssH;
-          // check distance to nearest text point (full check but limited attempts)
-          let ok = true;
-          for (let j=0;j<textPoints.length;j++){
-            const tp = textPoints[j];
-            const dx = tp.x - rx; const dy = tp.y - ry;
-            if (Math.hypot(dx,dy) < minDist) { ok = false; break; }
-          }
-          if (ok) { ambient.push({ x: rx, y: ry }); break; }
-          tries++;
-        }
-      }
-
-      const pts = [];
-      // text (black) particles
-      textPoints.forEach(p => pts.push({ x: p.x, y: p.y, ox: p.x, oy: p.y, vx: 0, vy: 0, inside: true }));
-      // ambient (red) particles
-      ambient.forEach(p => pts.push({ x: p.x, y: p.y, ox: p.x, oy: p.y, vx: 0, vy: 0, inside: false }));
-
-      particlesRef.current = pts;
+      return { targets, sample };
     }
 
-    // cancel any existing RAF
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-
-    function render() {
-      // clear using CSS size
-      ctx.clearRect(0,0,cssW,cssH);
-
-      // draw subtle connections
-      if (preset !== 'outline') {
-        ctx.strokeStyle = 'rgba(6,18,38,0.06)';
-        for (let i=0;i<particlesRef.current.length;i++){
-          const a = particlesRef.current[i];
-          for (let j=i+1;j<i+6 && j<particlesRef.current.length;j++){
-            const b = particlesRef.current[j];
-            const dx = a.x - b.x; const dy = a.y - b.y; const d = Math.hypot(dx,dy);
-            if (d < 40) {
-              ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-            }
-          }
-        }
+    function refillParticles(targets) {
+      const p = particlesRef.current;
+      // ensure we have at least as many particles as targets (cap particles)
+      const maxParticles = Math.min(1200, Math.max(80, targets.length));
+      // if too many targets, sample them
+      let chosen = targets;
+      if (targets.length > maxParticles) {
+        chosen = [];
+        const step = Math.ceil(targets.length / maxParticles);
+        for (let i = 0; i < targets.length; i += step) chosen.push(targets[i]);
       }
 
-      particlesRef.current.forEach(pt => {
-        // pointer interaction: repulse or attract
-        const dx = pt.x - pointerRef.current.x;
-        const dy = pt.y - pointerRef.current.y;
-        const dist = Math.max(1, Math.hypot(dx,dy));
-        const force = pointerRef.current.down ? (preset === 'chaotic' ? -600 : -300) : (preset === 'calm' ? 0 : -80);
-        const fx = (dx / dist) * (force / dist);
-        const fy = (dy / dist) * (force / dist);
-
-        pt.vx += fx + (pt.ox - pt.x) * 0.02;
-        pt.vy += fy + (pt.oy - pt.y) * 0.02;
-
-        pt.vx *= 0.88; pt.vy *= 0.88;
-        pt.x += pt.vx; pt.y += pt.vy;
-
-        // color: black for text, red for ambient
-        if (pt.inside) {
-          ctx.fillStyle = '#000000';
-          const r = 2.6;
-          ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI*2); ctx.fill();
+      // create or reuse particles
+      const out = [];
+      for (let i = 0; i < chosen.length; i++) {
+        const t = chosen[i];
+        const color = t.inside ? '#000' : 'rgb(220,40,60)';
+        if (p[i]) {
+          p[i].tx = t.x;
+          p[i].ty = t.y;
+          p[i].color = color;
+          out.push(p[i]);
         } else {
-          ctx.fillStyle = 'rgb(220,40,60)';
-          const r = preset==='chaotic' ? 2.2 : 1.6;
-          ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI*2); ctx.fill();
+          out.push(makeParticle(t.x, t.y, color));
         }
-      });
+      }
 
-      rafRef.current = requestAnimationFrame(render);
+      particlesRef.current = out;
     }
-    render();
 
-    function onMove(e) {
-      const rect = canvas.getBoundingClientRect();
-      pointerRef.current.x = e.clientX - rect.left;
-      pointerRef.current.y = e.clientY - rect.top;
+    // main animation loop
+    function tick() {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const { w, h } = sizeRef.current;
+      ctx.clearRect(0, 0, w, h);
+
+      // update particles
+      const p = particlesRef.current;
+      for (let i = 0; i < p.length; i++) {
+        const pt = p[i];
+        // spring to target
+        const dx = pt.tx - pt.x;
+        const dy = pt.ty - pt.y;
+        pt.vx += dx * 0.06;
+        pt.vy += dy * 0.06;
+        pt.vx *= 0.88;
+        pt.vy *= 0.88;
+        pt.x += pt.vx;
+        pt.y += pt.vy;
+
+        ctx.fillStyle = pt.color;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, pt.size * (pt.inside ? 1 : 0.9), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      rafRef.current = requestAnimationFrame(tick);
     }
-    function onDown(e) { pointerRef.current.down = true; onMove(e); }
-    function onUp() { pointerRef.current.down = false; }
 
-    canvas.addEventListener('pointermove', onMove);
-    canvas.addEventListener('pointerdown', onDown);
-    window.addEventListener('pointerup', onUp);
+    function startForText(displayText) {
+      const { targets } = buildTargetsFromText(displayText);
+      if (!targets || targets.length === 0) {
+        // fallback: random particles
+        const arr = new Array(200).fill(0).map(() => ({ x: Math.random() * sizeRef.current.w, y: Math.random() * sizeRef.current.h, inside: false }));
+        refillParticles(arr);
+      } else {
+        refillParticles(targets);
+      }
+
+      // ensure we stop previous loop
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(tick);
+    }
+
+    // initial run
+    startForText(text && text.trim().length > 0 ? text.trim().slice(0, 12) : 'go');
+
+    // handle resize
+    const onResize = () => {
+      resize();
+      // rebuild particles for current text
+      startForText(text && text.trim().length > 0 ? text.trim().slice(0, 12) : 'go');
+    };
+    window.addEventListener('resize', onResize);
 
     return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointermove', onMove);
-      canvas.removeEventListener('pointerdown', onDown);
-      window.removeEventListener('pointerup', onUp);
+      running = false;
+      window.removeEventListener('resize', onResize);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [text, preset]);
+  }, []); // only mount once
+
+  // react to text changes
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // rebuild targets based on text
+    const displayText = (text && text.trim().length > 0) ? text.trim().slice(0, 12) : 'go';
+    // small delay to allow resize/paint
+    setTimeout(() => {
+      // build targets by reusing the internal functions via creating a temporary offscreen run
+      const event = new CustomEvent('canvasParticles:updateText', { detail: { text: displayText } });
+      window.dispatchEvent(event);
+    }, 20);
+  }, [text]);
+
+  // listen for the custom event to rebuild (internal communication)
+  useEffect(() => {
+    function onUpdate(e) {
+      const newText = (e && e.detail && e.detail.text) ? e.detail.text : '';
+      // rebuild inside the same effect used for mount by calling startForText via dispatching a small inline function
+      // For simplicity, reuse the same logic by creating an offscreen canvas here
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // very similar buildTargetsFromText but inline to avoid refactoring complexity
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(300, rect.width || 600);
+      const h = Math.max(120, rect.height || 240);
+
+      const off = document.createElement('canvas');
+      const offCtx = off.getContext && off.getContext('2d');
+      if (!offCtx) return;
+
+      const sample = Math.max(6, Math.round(w / 80));
+      const W = Math.max(200, Math.round(w / sample));
+      const H = Math.max(60, Math.round(h / sample));
+      off.width = W; off.height = H;
+      offCtx.clearRect(0, 0, W, H);
+
+      const fontSize = Math.floor(H * 0.7);
+      offCtx.font = `bold ${fontSize}px system-ui, sans-serif`;
+      offCtx.fillStyle = '#000';
+      offCtx.textBaseline = 'middle';
+      offCtx.textAlign = 'center';
+      offCtx.fillText(newText, W / 2, H / 2);
+
+      let img;
+      try { img = offCtx.getImageData(0, 0, W, H).data; } catch (e) { img = null; }
+
+      const targets = [];
+      if (img) {
+        for (let yy = 0; yy < H; yy++) {
+          for (let xx = 0; xx < W; xx++) {
+            const idx = (yy * W + xx) * 4;
+            const alpha = img[idx + 3];
+            const lum = img[idx] + img[idx + 1] + img[idx + 2];
+            const inside = alpha > 10 || lum > 30;
+            if (inside) {
+              const cx = (xx / W) * w;
+              const cy = (yy / H) * h;
+              targets.push({ x: cx, y: cy, inside });
+            }
+          }
+        }
+      }
+
+      // refill particles
+      const p = particlesRef.current || [];
+      const maxParticles = Math.min(1200, Math.max(80, targets.length));
+      let chosen = targets;
+      if (targets.length > maxParticles) {
+        chosen = [];
+        const step = Math.ceil(targets.length / maxParticles);
+        for (let i = 0; i < targets.length; i += step) chosen.push(targets[i]);
+      }
+
+      const out = [];
+      for (let i = 0; i < chosen.length; i++) {
+        const t = chosen[i];
+        const color = t.inside ? '#000' : 'rgb(220,40,60)';
+        if (p[i]) {
+          p[i].tx = t.x;
+          p[i].ty = t.y;
+          p[i].color = color;
+          p[i].inside = t.inside;
+          out.push(p[i]);
+        } else {
+          out.push({
+            x: Math.random() * w,
+            y: Math.random() * h,
+            tx: t.x,
+            ty: t.y,
+            vx: 0,
+            vy: 0,
+            color,
+            size: Math.max(2, Math.round(Math.min(6, Math.random() * 4 + 1))),
+            inside: t.inside
+          });
+        }
+      }
+
+      particlesRef.current = out;
+    }
+
+    window.addEventListener('canvasParticles:updateText', onUpdate);
+    return () => window.removeEventListener('canvasParticles:updateText', onUpdate);
+  }, []);
 
   return (
-    <div style={{minHeight:260,display:'flex',alignItems:'center',justifyContent:'center'}}>
-      <canvas ref={canvasRef} style={{width:'100%',height:240,maxWidth:900,background:'#fbfcfe',borderRadius:8}} />
+    <div style={{width:'100%',height:240,maxWidth:900,background:'#fff',padding:8,borderRadius:8,boxSizing:'border-box',overflow:'hidden'}}>
+      <canvas ref={canvasRef} style={{width:'100%',height:'100%',display:'block'}} />
     </div>
   );
 }
