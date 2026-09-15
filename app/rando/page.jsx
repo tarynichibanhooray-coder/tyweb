@@ -1,4 +1,3 @@
-// app/rando/page.jsx
 'use client';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getBrowserSupabase } from '../../lib/supabaseClient.browser';
@@ -46,62 +45,87 @@ export default function RandoPage() {
     return () => { mounted = false; };
   }, [supabase]);
 
-  // subscribe to realtime inserts
+  // subscribe to realtime inserts (dedupe + logs)
   useEffect(() => {
     const channel = supabase
       .channel('public:sentences')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sentences' }, (payload) => {
-        const row = payload.new;
-        const sentence = { id: row.id, text: row.text, created_at: row.created_at };
-        setQueue((q) => {
-          // append preserving order
-          return [...q, sentence];
-        });
-      })
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'sentences' },
+        (payload) => {
+          const row = payload?.new;
+          if (!row) return;
+          const sentence = { id: row.id, text: row.text, created_at: row.created_at };
+          console.log('[REALTIME] insert received id=', sentence.id);
+
+          setQueue((prev) => {
+            // ignore if already active
+            if (active?.sentence?.id === sentence.id) {
+              console.log('[REALTIME] ignoring: already active id=', sentence.id);
+              return prev;
+            }
+            // ignore if already queued
+            if (prev.some((s) => s.id === sentence.id)) {
+              console.log('[REALTIME] ignoring duplicate id=', sentence.id);
+              return prev;
+            }
+            const next = [...prev, sentence];
+            console.log('[REALTIME] queued id=', sentence.id, 'newQueueLen=', next.length);
+            return next;
+          });
+        }
+      )
       .subscribe();
 
     return () => {
       if (channel) supabase.removeChannel(channel);
     };
-  }, [supabase]);
+  }, [supabase, active]);
 
-  // Activation / queue processing
+  // Activation / queue processing (per-item timeout)
   useEffect(() => {
-    // Helper to try activating next if eligible
-    function tryAdvance() {
-      if (!active && queue.length > 0) {
-        const next = queue[0];
-        setQueue((q) => q.slice(1));
-        setActive({ sentence: next, activatedAt: Date.now() });
-        return;
-      }
-      if (active && queue.length > 0) {
-        const elapsed = Date.now() - active.activatedAt;
-        if (elapsed >= MIN_DISPLAY_DURATION_MS) {
-          const next = queue[0];
-          setQueue((q) => q.slice(1));
-          setActive({ sentence: next, activatedAt: Date.now() });
-        }
-      }
-    }
+    console.log('[ACT] effect run; activeId=', active?.sentence?.id, 'activatedAt=', active?.activatedAt, 'queueLen=', queue.length);
 
-    // Clear any existing timer
+    // clear any existing timeout
     if (timerRef.current) {
-      clearInterval(timerRef.current);
+      clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    // Poll every second to check transitions; this keeps logic simple and deterministic.
-    timerRef.current = setInterval(tryAdvance, 1000);
-    // Also run once immediately
-    tryAdvance();
+
+    // If idle and there are queued items, activate the next immediately
+    if (!active && queue.length > 0) {
+      const next = queue[0];
+      setQueue((q) => q.slice(1));
+      setActive({ sentence: next, activatedAt: Date.now() });
+      // active will update and re-run this effect, so return here
+      return;
+    }
+
+    // If there is an active item, schedule advancement after the remaining min display time
+    if (active) {
+      const elapsed = Date.now() - active.activatedAt;
+      const remaining = Math.max(0, MIN_DISPLAY_DURATION_MS - elapsed);
+      timerRef.current = setTimeout(() => {
+        setQueue((q) => {
+          console.log('[ACT] timeout fired; queueBeforeAdvance=', q.length);
+          if (q.length === 0) {
+            setActive(null);
+            return q;
+          }
+          const [next, ...rest] = q;
+          setActive({ sentence: next, activatedAt: Date.now() });
+          return rest;
+        });
+      }, remaining);
+    }
 
     return () => {
       if (timerRef.current) {
-        clearInterval(timerRef.current);
+        clearTimeout(timerRef.current);
         timerRef.current = null;
       }
     };
-  }, [active, queue]);
+  }, [active?.activatedAt, queue.length]);
 
   // Submission
   const [input, setInput] = useState('');
