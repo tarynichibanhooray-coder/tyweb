@@ -77,7 +77,11 @@ export default function GsapGridDemo({ text = '', preset = 'calm' }) {
 
     // after DOM paint, import gsap and animate
     requestAnimationFrame(() => {
-      import('gsap').then((gsap) => {
+      import('gsap').then((mod) => {
+        // support different import shapes
+        const gsap = (mod && (mod.gsap || mod.default)) || mod;
+        if (!gsap) return;
+
         // kill previous tween if any
         if (tweenRef.current) {
           try { tweenRef.current.kill(); } catch (e) {}
@@ -88,20 +92,23 @@ export default function GsapGridDemo({ text = '', preset = 'calm' }) {
         // apply initial transform style
         boxes.forEach(b => { b.style.willChange = 'transform'; });
 
-        // create tween
+        // create tween: use y:100 and stagger as requested. Provide grid dims so 'grid:auto' behavior is correct.
         tweenRef.current = gsap.to(boxes, {
-          y: 40,
+          y: 100,
           duration: 0.9,
           ease: 'power2.inOut',
           stagger: {
             each: 0.1,
             from: 'center',
-            grid: 'auto'
+            grid: [cols, rows]
           },
           repeat: -1,
           yoyo: true
         });
-      }).catch(() => {});
+      }).catch((err) => {
+        // swallow but log to console for debugging
+        console.error('Failed to load GSAP', err);
+      });
     });
 
     return () => {
