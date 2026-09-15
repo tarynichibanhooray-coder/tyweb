@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getBrowserSupabase } from '../../lib/supabaseClient.browser';
 import { MIN_DISPLAY_DURATION_MS, MAX_SENTENCE_LENGTH } from '../../lib/randoConfig';
+import DailyStyleText from '../../components/DailyStyleText';
 
 function mergeSentences(prev, incoming) {
   const byId = new Map(prev.map((s) => [s.id, s]));
@@ -114,7 +115,6 @@ export default function RandoPage() {
   // show the earliest pending sentence rather than a blank state.
   if (activeIndex === -1 && sentences.length > 0) activeIndex = 0;
   const active = activeIndex >= 0 ? sentences[activeIndex] : null;
-  const queueLength = sentences.length > 0 ? sentences.length - activeIndex - 1 : 0;
 
   // Submission
   const [input, setInput] = useState('');
@@ -153,12 +153,12 @@ export default function RandoPage() {
 
   return (
     <div style={{ padding: 32, fontFamily: 'system-ui, sans-serif', color: '#111' }}>
-      <h1>Rando — shared realtime sentences</h1>
       <div style={{ marginBottom: 16 }}>
         <div style={{ borderRadius: 12, background: '#111', color: '#fff', padding: 24, minHeight: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ fontSize: 'clamp(18px, 4vw, 48px)', textAlign: 'center' }}>
-            {activeText || 'No sentences yet — submit one!'}
-          </div>
+          <DailyStyleText
+            text={activeText || 'No sentences yet — submit one!'}
+            style={{ fontSize: 'clamp(18px, 4vw, 48px)', textAlign: 'center' }}
+          />
         </div>
       </div>
 
@@ -174,12 +174,6 @@ export default function RandoPage() {
         <button onClick={submit} disabled={submitting} style={{ padding: '8px 12px', borderRadius: 8 }}>
           Submit
         </button>
-      </div>
-
-      <div style={{ marginTop: 12, color: '#666' }}>
-        {error && <div style={{ color: 'crimson' }}>Error: {error}</div>}
-        <div>Queue length: {queueLength}</div>
-        <div style={{ marginTop: 8 }}>Each sentence displays for a minimum of {MIN_DISPLAY_DURATION_MS / 1000} seconds.</div>
       </div>
     </div>
   );

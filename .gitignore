@@ -66,3 +66,4 @@ credentials.json
 
 # Supabase CLI temporary files
 supabase/.temp/
+.env*
