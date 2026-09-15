@@ -91,33 +91,10 @@ export default function RandoPage() {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-
-    // If idle and there are queued items, activate the next immediately
-    if (!active && queue.length > 0) {
-      const next = queue[0];
-      setQueue((q) => q.slice(1));
-      setActive({ sentence: next, activatedAt: Date.now() });
-      // active will update and re-run this effect, so return here
-      return;
-    }
-
-    // If there is an active item, schedule advancement after the remaining min display time
-    if (active) {
-      const elapsed = Date.now() - active.activatedAt;
-      const remaining = Math.max(0, MIN_DISPLAY_DURATION_MS - elapsed);
-      timerRef.current = setTimeout(() => {
-        setQueue((q) => {
-          console.log('[ACT] timeout fired; queueBeforeAdvance=', q.length);
-          if (q.length === 0) {
-            setActive(null);
-            return q;
-          }
-          const [next, ...rest] = q;
-          setActive({ sentence: next, activatedAt: Date.now() });
-          return rest;
-        });
-      }, remaining);
-    }
+    // Poll every second to check transitions; this keeps logic simple and deterministic.
+    timerRef.current = setInterval(tryAdvance, 1000);
+    // Also run once immediately
+    tryAdvance(); 
 
     return () => {
       if (timerRef.current) {

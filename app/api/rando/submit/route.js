@@ -1,9 +1,9 @@
 // app/api/rando/submit/route.js
 import { NextResponse } from 'next/server';
-import createServerSupabaseClient from '../../../lib/supabaseClient.server';
-import { countGraphemes } from '../../../lib/grapheme';
-import rateLimiter from '../../../lib/rateLimiter';
-import { MAX_SENTENCE_LENGTH } from '../../../lib/randoConfig';
+import createServerSupabaseClient from '../../../../lib/supabaseClient.server';
+import { countGraphemes } from '../../../../lib/grapheme';
+import rateLimiter from '../../../../lib/rateLimiter';
+import { MAX_SENTENCE_LENGTH } from '../../../../lib/randoConfig';
 
 export async function POST(req) {
   try {
