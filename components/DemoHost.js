@@ -6,13 +6,11 @@ import '../styles/split-demo.css';
 const SplitScenario = dynamic(() => import('./SplitScenario'), { ssr: false });
 const SvgScenario = dynamic(() => import('./SvgScenario'), { ssr: false });
 const CanvasParticles = dynamic(() => import('./CanvasParticles'), { ssr: false });
-const PixiScenario = dynamic(() => import('./PixiScenario'), { ssr: false });
 
 const SCENARIOS = [
   { id: 'dom', label: 'DOM (GSAP)' },
   { id: 'svg', label: 'SVG' },
-  { id: 'canvas', label: 'Canvas Particles' },
-  { id: 'pixi', label: 'Pixi (GPU)' },
+  { id: 'canvas', label: 'Canvas Particles' }
 ];
 
 export default function DemoHost() {
@@ -20,9 +18,9 @@ export default function DemoHost() {
   const [scenario, setScenario] = useState('dom');
 
   useEffect(() => {
-    // basic keyboard shortcuts: 1..4 switch scenarios
+    // basic keyboard shortcuts: 1..3 switch scenarios
     function onKey(e) {
-      if (e.key >= '1' && e.key <= '4') {
+      if (e.key >= '1' && e.key <= '3') {
         const idx = Number(e.key) - 1;
         setScenario(SCENARIOS[idx].id);
       }
@@ -52,7 +50,6 @@ export default function DemoHost() {
           {scenario === 'dom' && <SplitScenario text={text} />}
           {scenario === 'svg' && <SvgScenario text={text} />}
           {scenario === 'canvas' && <CanvasParticles text={text} />}
-          {scenario === 'pixi' && <PixiScenario text={text} />}
         </Suspense>
       </div>
 

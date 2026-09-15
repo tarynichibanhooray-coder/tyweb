@@ -15,7 +15,6 @@
     "gsap": "^3.12.2",
     "splitting": "^1.0.6",
     "flubber": "^0.4.2",
-    "simplex-noise": "^4.0.0",
-    "pixi.js": "^8.2.0"
+    "simplex-noise": "^4.0.0"
   }
 }
