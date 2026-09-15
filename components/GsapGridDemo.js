@@ -8,6 +8,7 @@ export default function GsapGridDemo({ text = '', preset = 'calm' }) {
   const [cols, setCols] = useState(40);
   const [rows, setRows] = useState(12);
 
+  // generate grid cells from the sampled text
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -16,7 +17,6 @@ export default function GsapGridDemo({ text = '', preset = 'calm' }) {
       const rect = container.getBoundingClientRect();
       const cssW = Math.max(300, rect.width || 600);
       const cssH = Math.max(120, rect.height || 240);
-      // determine grid dimensions based on container size
       const c = Math.max(8, Math.min(80, Math.floor(cssW / 14)));
       const r = Math.max(6, Math.min(40, Math.floor(cssH / 20)));
       return { cssW, cssH, c, r };
@@ -25,25 +25,20 @@ export default function GsapGridDemo({ text = '', preset = 'calm' }) {
     const { cssW, cssH, c, r } = measure();
     setCols(c); setRows(r);
 
-    // offscreen canvas for sampling the provided text
     const off = document.createElement('canvas');
     const offCtx = off.getContext && off.getContext('2d');
     if (!offCtx) {
-      // fallback to plain grid
-      const fallback = new Array(c*r).fill(0).map((_,i)=>({ inside: Math.random() < 0.15 }));
+      const fallback = new Array(c*r).fill(0).map(() => ({ inside: Math.random() < 0.15 }));
       setCells(fallback);
       return;
     }
 
-    // higher internal resolution for drawing glyphs
     const W = c * 10;
     const H = r * 10;
     off.width = W; off.height = H;
     offCtx.clearRect(0,0,W,H);
 
-    // use provided text (trimmed, limited length) or default to 'go'
     let displayText = (text && text.trim().length > 0) ? text.trim() : 'go';
-    // limit to reasonable length so sampling remains useful
     displayText = displayText.slice(0, 12);
 
     const fontSize = Math.floor(H * 0.7);
@@ -74,47 +69,89 @@ export default function GsapGridDemo({ text = '', preset = 'calm' }) {
     }
 
     setCells(pts);
+  }, [text, preset]);
 
-    // after DOM paint, import gsap and animate
-    requestAnimationFrame(() => {
+  // run GSAP animation after cells have rendered
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    if (!cells || cells.length === 0) return;
+
+    // ensure DOM paint
+    const t = setTimeout(() => {
       import('gsap').then((mod) => {
-        // support different import shapes
         const gsap = (mod && (mod.gsap || mod.default)) || mod;
-        if (!gsap) return;
+        if (!gsap) {
+          console.error('GSAP import succeeded but no gsap export found');
+          return;
+        }
 
-        // kill previous tween if any
+        // kill previous tween
         if (tweenRef.current) {
           try { tweenRef.current.kill(); } catch (e) {}
+          tweenRef.current = null;
         }
-        const boxes = container.querySelectorAll('.box');
-        if (!boxes || boxes.length === 0) return;
 
-        // apply initial transform style
-        boxes.forEach(b => { b.style.willChange = 'transform'; });
+        const boxes = Array.from(container.querySelectorAll('.box'));
+        if (!boxes || boxes.length === 0) {
+          console.warn('GSAP grid: no .box elements found');
+          return;
+        }
 
-        // create tween: use y:100 and stagger as requested. Provide grid dims so 'grid:auto' behavior is correct.
-        tweenRef.current = gsap.to(boxes, {
-          y: 100,
-          duration: 0.9,
-          ease: 'power2.inOut',
-          stagger: {
-            each: 0.1,
-            from: 'center',
-            grid: [cols, rows]
-          },
-          repeat: -1,
-          yoyo: true
-        });
+        boxes.forEach(b => { b.style.willChange = 'transform'; b.style.transform = 'translateY(0px)'; });
+
+        // Use the exact stagger configuration you requested. Use grid: 'auto' first, fallback to [cols,rows].
+        let staggerGrid = 'auto';
+        try {
+          tweenRef.current = gsap.to(boxes, {
+            y: 100,
+            duration: 0.9,
+            ease: 'power2.inOut',
+            stagger: {
+              each: 0.1,
+              from: 'center',
+              grid: staggerGrid
+            },
+            repeat: -1,
+            repeatDelay: 0,
+            yoyo: false
+          });
+        } catch (err) {
+          // some GSAP builds may not accept 'auto' for grid; fallback to explicit dims
+          console.warn('GSAP stagger grid:auto failed, falling back to explicit grid', err);
+          try {
+            tweenRef.current = gsap.to(boxes, {
+              y: 100,
+              duration: 0.9,
+              ease: 'power2.inOut',
+              stagger: {
+                each: 0.1,
+                from: 'center',
+                grid: [cols, rows]
+              },
+              repeat: -1,
+              repeatDelay: 0,
+              yoyo: false
+            });
+          } catch (err2) {
+            console.error('GSAP stagger fallback failed', err2);
+          }
+        }
+
+        console.info('GSAP grid animation started', { count: boxes.length, cols, rows });
       }).catch((err) => {
-        // swallow but log to console for debugging
-        console.error('Failed to load GSAP', err);
+        console.error('Failed to import GSAP', err);
       });
-    });
+    }, 40);
 
     return () => {
-      if (tweenRef.current) try { tweenRef.current.kill(); } catch (e) {}
+      clearTimeout(t);
+      if (tweenRef.current) {
+        try { tweenRef.current.kill(); } catch (e) {}
+        tweenRef.current = null;
+      }
     };
-  }, [text, preset]);
+  }, [cells, cols, rows]);
 
   return (
     <div style={{minHeight:260,display:'flex',alignItems:'center',justifyContent:'center'}}>
