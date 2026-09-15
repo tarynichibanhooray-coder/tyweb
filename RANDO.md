@@ -34,3 +34,4 @@ Notes & TODOs
 - DB enforces char_length(text) <= 60. Server-side validation uses grapheme-aware counting where possible; TODO: consider stricter DB-side grapheme enforcement if necessary.
 - Do not commit SUPABASE_SERVICE_ROLE_KEY; set it as a server-only environment variable in Vercel.
 
+
