@@ -1,0 +1,8 @@
+/* per-char styling and will-change hints */
+.st-char {
+  display: inline-block;
+  transform-origin: center;
+  will-change: transform, opacity;
+  margin-right: -0.01em;
+  font-variant-ligatures: none; /* disable ligatures so split chars match glyphs */
+}
