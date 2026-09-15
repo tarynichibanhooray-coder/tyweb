@@ -6,11 +6,13 @@ import '../styles/split-demo.css';
 const SplitScenario = dynamic(() => import('./SplitScenario'), { ssr: false });
 const SvgScenario = dynamic(() => import('./SvgScenario'), { ssr: false });
 const CanvasParticles = dynamic(() => import('./CanvasParticles'), { ssr: false });
+const GsapGridDemo = dynamic(() => import('./GsapGridDemo'), { ssr: false });
 
 const SCENARIOS = [
   { id: 'dom', label: 'DOM (GSAP)' },
   { id: 'svg', label: 'SVG' },
-  { id: 'canvas', label: 'Canvas Particles' }
+  { id: 'canvas', label: 'Canvas Particles' },
+  { id: 'gsap-blocks', label: 'GSAP Blocks' }
 ];
 
 const PRESETS = [
@@ -26,7 +28,7 @@ export default function DemoHost() {
 
   useEffect(() => {
     function onKey(e) {
-      if (e.key >= '1' && e.key <= '3') {
+      if (e.key >= '1' && e.key <= String(SCENARIOS.length)) {
         const idx = Number(e.key) - 1;
         setScenario(SCENARIOS[idx].id);
       }
@@ -49,7 +51,7 @@ export default function DemoHost() {
         <div style={{display:'flex',gap:12}}>
           {SCENARIOS.map(s => (
             <button key={s.id} onClick={() => setScenario(s.id)} aria-pressed={scenario===s.id}
-              className={"seg-btn" + (scenario===s.id? ' active':'')}>
+              className={"seg-btn" + (scenario===s.id? ' active':'' )}>
               {s.label}
             </button>
           ))}
@@ -71,13 +73,14 @@ export default function DemoHost() {
 
       <div style={{background:'#fff',padding:20,borderRadius:12,border:'1px solid rgba(0,0,0,0.04)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-          <small style={{color:'#6b7280'}}>Shortcuts: 1/2/3 switch scenarios • Q/W/E presets • Space retrigger</small>
+          <small style={{color:'#6b7280'}}>Shortcuts: 1/2/3/4 switch scenarios • Q/W/E presets • Space retrigger</small>
           <small style={{color:'#6b7280'}}>Preset: {preset}</small>
         </div>
         <Suspense fallback={<div style={{height:360,display:'flex',alignItems:'center',justifyContent:'center'}}>Loading...</div>}>
           {scenario === 'dom' && <SplitScenario text={text} preset={preset} />}
           {scenario === 'svg' && <SvgScenario text={text} preset={preset} />}
           {scenario === 'canvas' && <CanvasParticles text={text} preset={preset} />}
+          {scenario === 'gsap-blocks' && <GsapGridDemo text={text} preset={preset} />}
         </Suspense>
       </div>
 
