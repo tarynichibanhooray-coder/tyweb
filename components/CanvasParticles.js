@@ -40,19 +40,21 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
     const offCtx = off.getContext && off.getContext('2d');
     if (!offCtx) {
       // fallback: create some simple particles
-      particlesRef.current = [{ x: cssW / 2, y: cssH / 2, ox: cssW / 2, oy: cssH / 2, vx: 0, vy: 0 }];
+      particlesRef.current = [{ x: cssW / 2, y: cssH / 2, ox: cssW / 2, oy: cssH / 2, vx: 0, vy: 0, inside: true }];
     } else {
       const w = Math.max(240, Math.floor(cssW));
       const h = Math.max(96, Math.floor(cssH));
       off.width = w; off.height = h;
       offCtx.clearRect(0,0,w,h);
+      // force the displayed word to 'stop'
+      const displayText = 'stop';
       // adjust font size relative to offscreen height
       const fontSize = Math.max(24, Math.floor(h * 0.45));
       offCtx.font = `bold ${fontSize}px system-ui, sans-serif`;
       offCtx.fillStyle = '#000';
       offCtx.textBaseline = 'middle';
       offCtx.textAlign = 'center';
-      offCtx.fillText(text || '', w/2, h/2);
+      offCtx.fillText(displayText, w/2, h/2);
 
       let img;
       try {
@@ -61,7 +63,7 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
         img = null;
       }
 
-      const points = [];
+      const textPoints = [];
       if (img) {
         const step = preset === 'chaotic' ? 4 : 6;
         for (let y=0;y<h;y+=step){
@@ -69,24 +71,48 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
             const idx = (y*w + x)*4;
             if (img[idx] > 128) {
               // map to CSS pixels space
-              points.push({x: x/w*cssW, y: y/h*cssH});
+              textPoints.push({x: x/w*cssW, y: y/h*cssH});
             }
           }
         }
       }
 
       // fallback if sampling produced nothing
-      if (points.length === 0) {
-        // create a grid of points as fallback
-        const cols = 40; const rows = 12;
-        for (let r=0;r<rows;r++){
-          for (let c=0;c<cols;c++){
-            points.push({ x: (c+0.5)/cols*cssW, y: (r+0.5)/rows*cssH });
-          }
+      if (textPoints.length === 0) {
+        // create a small centered word-shaped fallback: a few clustered points
+        for (let i=0;i<120;i++){
+          textPoints.push({ x: cssW/2 + (Math.random()-0.5)*120, y: cssH/2 + (Math.random()-0.5)*48 });
         }
       }
 
-      particlesRef.current = points.map(p => ({ x: p.x, y: p.y, ox: p.x, oy: p.y, vx: 0, vy: 0 }));
+      // create ambient red dots around the canvas, avoiding overlapping text points
+      const ambient = [];
+      const ambientCount = Math.max(200, Math.floor((cssW*cssH)/8000));
+      const minDist = 14; // minimum distance from text points
+      for (let i=0;i<ambientCount;i++){
+        let tries = 0;
+        while (tries < 8) {
+          const rx = Math.random()*cssW;
+          const ry = Math.random()*cssH;
+          // check distance to nearest text point
+          let ok = true;
+          for (let j=0;j<3;j++){ // sample up to 3 text points to avoid heavy loops
+            const tp = textPoints[Math.floor(Math.random()*textPoints.length)];
+            const dx = tp.x - rx; const dy = tp.y - ry;
+            if (Math.hypot(dx,dy) < minDist) { ok = false; break; }
+          }
+          if (ok) { ambient.push({ x: rx, y: ry }); break; }
+          tries++;
+        }
+      }
+
+      const pts = [];
+      // text (black) particles
+      textPoints.forEach(p => pts.push({ x: p.x, y: p.y, ox: p.x, oy: p.y, vx: 0, vy: 0, inside: true }));
+      // ambient (red) particles
+      ambient.forEach(p => pts.push({ x: p.x, y: p.y, ox: p.x, oy: p.y, vx: 0, vy: 0, inside: false }));
+
+      particlesRef.current = pts;
     }
 
     // cancel any existing RAF
@@ -96,9 +122,9 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
       // clear using CSS size
       ctx.clearRect(0,0,cssW,cssH);
 
-      // draw connections
+      // draw connections (optional: draw only among ambient to avoid clutter)
       if (preset !== 'outline') {
-        ctx.strokeStyle = 'rgba(6,18,38,0.08)';
+        ctx.strokeStyle = 'rgba(6,18,38,0.06)';
         for (let i=0;i<particlesRef.current.length;i++){
           const a = particlesRef.current[i];
           for (let j=i+1;j<i+6 && j<particlesRef.current.length;j++){
@@ -126,10 +152,16 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
         pt.vx *= 0.88; pt.vy *= 0.88;
         pt.x += pt.vx; pt.y += pt.vy;
 
-        // color ramp
-        const c = Math.min(255, 30 + Math.abs(Math.sin((pt.x+pt.y)/50))*220);
-        ctx.fillStyle = `rgb(${c},${60},${160})`;
-        ctx.beginPath(); ctx.arc(pt.x, pt.y, preset==='chaotic' ? 2.2 : 1.6, 0, Math.PI*2); ctx.fill();
+        // color: black for text, red for ambient
+        if (pt.inside) {
+          ctx.fillStyle = '#000000';
+          const r = 2.6;
+          ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI*2); ctx.fill();
+        } else {
+          ctx.fillStyle = 'rgb(220,40,60)';
+          const r = preset==='chaotic' ? 2.2 : 1.6;
+          ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI*2); ctx.fill();
+        }
       });
 
       rafRef.current = requestAnimationFrame(render);
