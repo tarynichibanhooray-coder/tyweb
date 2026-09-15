@@ -35,21 +35,22 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
     resize();
     window.addEventListener('resize', resize);
 
-    // draw text to offscreen canvas and sample. Use a reasonable sampling texture size
+    // draw text to offscreen canvas and sample. Use a higher-res sampling to detect glyphs reliably
     const off = document.createElement('canvas');
     const offCtx = off.getContext && off.getContext('2d');
     if (!offCtx) {
       // fallback: create some simple particles
       particlesRef.current = [{ x: cssW / 2, y: cssH / 2, ox: cssW / 2, oy: cssH / 2, vx: 0, vy: 0, inside: true }];
     } else {
-      const w = Math.max(240, Math.floor(cssW));
-      const h = Math.max(96, Math.floor(cssH));
+      // increase offscreen size to improve sampling fidelity
+      const w = Math.max(480, Math.floor(cssW * 1.2));
+      const h = Math.max(160, Math.floor(cssH * 1.2));
       off.width = w; off.height = h;
       offCtx.clearRect(0,0,w,h);
       // force the displayed word to 'stop'
       const displayText = 'stop';
-      // adjust font size relative to offscreen height
-      const fontSize = Math.max(24, Math.floor(h * 0.45));
+      // choose a large font so glyphs have enough pixels
+      const fontSize = Math.floor(h * 0.72);
       offCtx.font = `bold ${fontSize}px system-ui, sans-serif`;
       offCtx.fillStyle = '#000';
       offCtx.textBaseline = 'middle';
@@ -65,11 +66,15 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
 
       const textPoints = [];
       if (img) {
-        const step = preset === 'chaotic' ? 4 : 6;
+        // finer sampling so we capture shape
+        const step = preset === 'chaotic' ? 3 : 4;
         for (let y=0;y<h;y+=step){
           for (let x=0;x<w;x+=step){
             const idx = (y*w + x)*4;
-            if (img[idx] > 128) {
+            // check alpha channel or luminance to see if pixel is filled
+            const alpha = img[idx+3];
+            const lum = img[idx] + img[idx+1] + img[idx+2];
+            if (alpha > 10 || lum > 30) {
               // map to CSS pixels space
               textPoints.push({x: x/w*cssW, y: y/h*cssH});
             }
@@ -80,24 +85,24 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
       // fallback if sampling produced nothing
       if (textPoints.length === 0) {
         // create a small centered word-shaped fallback: a few clustered points
-        for (let i=0;i<120;i++){
-          textPoints.push({ x: cssW/2 + (Math.random()-0.5)*120, y: cssH/2 + (Math.random()-0.5)*48 });
+        for (let i=0;i<240;i++){
+          textPoints.push({ x: cssW/2 + (Math.random()-0.5)*140, y: cssH/2 + (Math.random()-0.5)*56 });
         }
       }
 
       // create ambient red dots around the canvas, avoiding overlapping text points
       const ambient = [];
       const ambientCount = Math.max(200, Math.floor((cssW*cssH)/8000));
-      const minDist = 14; // minimum distance from text points
+      const minDist = 12; // minimum distance from text points
       for (let i=0;i<ambientCount;i++){
         let tries = 0;
-        while (tries < 8) {
+        while (tries < 14) {
           const rx = Math.random()*cssW;
           const ry = Math.random()*cssH;
-          // check distance to nearest text point
+          // check distance to nearest text point (full check but limited attempts)
           let ok = true;
-          for (let j=0;j<3;j++){ // sample up to 3 text points to avoid heavy loops
-            const tp = textPoints[Math.floor(Math.random()*textPoints.length)];
+          for (let j=0;j<textPoints.length;j++){
+            const tp = textPoints[j];
             const dx = tp.x - rx; const dy = tp.y - ry;
             if (Math.hypot(dx,dy) < minDist) { ok = false; break; }
           }
@@ -122,7 +127,7 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
       // clear using CSS size
       ctx.clearRect(0,0,cssW,cssH);
 
-      // draw connections (optional: draw only among ambient to avoid clutter)
+      // draw subtle connections
       if (preset !== 'outline') {
         ctx.strokeStyle = 'rgba(6,18,38,0.06)';
         for (let i=0;i<particlesRef.current.length;i++){
