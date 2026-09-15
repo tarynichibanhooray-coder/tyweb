@@ -9,44 +9,92 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    if (!canvas) return;
+    const ctx = canvas.getContext && canvas.getContext('2d');
+    if (!ctx) return;
+
+    // measure CSS size reliably
+    function measure() {
+      const rect = canvas.getBoundingClientRect();
+      const cssW = rect.width || canvas.clientWidth || 600;
+      const cssH = rect.height || canvas.clientHeight || 240;
+      return { cssW, cssH };
+    }
+
+    let { cssW, cssH } = measure();
+
     let DPR = Math.min(window.devicePixelRatio || 1, 1.5);
     function resize() {
-      canvas.width = Math.floor(canvas.clientWidth * DPR);
-      canvas.height = Math.floor(canvas.clientHeight * DPR);
+      const m = measure();
+      cssW = m.cssW; cssH = m.cssH;
+      canvas.width = Math.max(1, Math.floor(cssW * DPR));
+      canvas.height = Math.max(1, Math.floor(cssH * DPR));
+      // make drawing use CSS pixels
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     }
     resize();
     window.addEventListener('resize', resize);
 
-    // draw text to offscreen canvas and sample
+    // draw text to offscreen canvas and sample. Use a reasonable sampling texture size
     const off = document.createElement('canvas');
-    const offCtx = off.getContext('2d');
-    const w = 600, h = 200;
-    off.width = w; off.height = h;
-    offCtx.clearRect(0,0,w,h);
-    offCtx.font = 'bold 96px system-ui, sans-serif';
-    offCtx.fillStyle = '#000';
-    offCtx.textBaseline = 'middle';
-    offCtx.textAlign = 'center';
-    offCtx.fillText(text || '', w/2, h/2);
+    const offCtx = off.getContext && off.getContext('2d');
+    if (!offCtx) {
+      // fallback: create some simple particles
+      particlesRef.current = [{ x: cssW / 2, y: cssH / 2, ox: cssW / 2, oy: cssH / 2, vx: 0, vy: 0 }];
+    } else {
+      const w = Math.max(240, Math.floor(cssW));
+      const h = Math.max(96, Math.floor(cssH));
+      off.width = w; off.height = h;
+      offCtx.clearRect(0,0,w,h);
+      // adjust font size relative to offscreen height
+      const fontSize = Math.max(24, Math.floor(h * 0.45));
+      offCtx.font = `bold ${fontSize}px system-ui, sans-serif`;
+      offCtx.fillStyle = '#000';
+      offCtx.textBaseline = 'middle';
+      offCtx.textAlign = 'center';
+      offCtx.fillText(text || '', w/2, h/2);
 
-    const img = offCtx.getImageData(0,0,w,h).data;
-    const points = [];
-    const step = preset === 'chaotic' ? 4 : 6;
-    for (let y=0;y<h;y+=step){
-      for (let x=0;x<w;x+=step){
-        const idx = (y*w + x)*4;
-        if (img[idx] > 128) {
-          points.push({x: x/w*canvas.clientWidth, y: y/h*canvas.clientHeight});
+      let img;
+      try {
+        img = offCtx.getImageData(0,0,w,h).data;
+      } catch (e) {
+        img = null;
+      }
+
+      const points = [];
+      if (img) {
+        const step = preset === 'chaotic' ? 4 : 6;
+        for (let y=0;y<h;y+=step){
+          for (let x=0;x<w;x+=step){
+            const idx = (y*w + x)*4;
+            if (img[idx] > 128) {
+              // map to CSS pixels space
+              points.push({x: x/w*cssW, y: y/h*cssH});
+            }
+          }
         }
       }
+
+      // fallback if sampling produced nothing
+      if (points.length === 0) {
+        // create a grid of points as fallback
+        const cols = 40; const rows = 12;
+        for (let r=0;r<rows;r++){
+          for (let c=0;c<cols;c++){
+            points.push({ x: (c+0.5)/cols*cssW, y: (r+0.5)/rows*cssH });
+          }
+        }
+      }
+
+      particlesRef.current = points.map(p => ({ x: p.x, y: p.y, ox: p.x, oy: p.y, vx: 0, vy: 0 }));
     }
 
-    particlesRef.current = points.map(p => ({ x: p.x, y: p.y, ox: p.x, oy: p.y, vx: 0, vy: 0 }));
+    // cancel any existing RAF
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
     function render() {
-      ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);
+      // clear using CSS size
+      ctx.clearRect(0,0,cssW,cssH);
 
       // draw connections
       if (preset !== 'outline') {
@@ -105,7 +153,7 @@ export default function CanvasParticles({ text = '', preset = 'calm' }) {
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerdown', onDown);
       window.removeEventListener('pointerup', onUp);
-      cancelAnimationFrame(rafRef.current);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, [text, preset]);
 
