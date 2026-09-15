@@ -1,52 +1,66 @@
 'use client';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getBrowserSupabase } from '../../lib/supabaseClient.browser';
 import { MIN_DISPLAY_DURATION_MS, MAX_SENTENCE_LENGTH } from '../../lib/randoConfig';
 
-// Map DB rows to RandoEvent
-function toEvent(row) {
-  return { type: 'sentence.created', sentence: { id: row.id, text: row.text, created_at: row.created_at } };
+function mergeSentences(prev, incoming) {
+  const byId = new Map(prev.map((s) => [s.id, s]));
+  for (const row of incoming) {
+    byId.set(row.id, { id: row.id, text: row.text, created_at: row.created_at });
+  }
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(a.created_at) - new Date(b.created_at)
+  );
+}
+
+// Each sentence's on-screen start time: its own arrival, unless the previous
+// sentence's minimum-display slot hasn't ended yet — in which case it queues
+// behind it. Purely a function of the (shared) sentence list, so every client
+// computes the identical schedule without any per-client anchor.
+function computeSchedule(sentences) {
+  const schedule = [];
+  let prevEnd = -Infinity;
+  for (const s of sentences) {
+    const start = Math.max(new Date(s.created_at).getTime(), prevEnd);
+    schedule.push(start);
+    prevEnd = start + MIN_DISPLAY_DURATION_MS;
+  }
+  return schedule;
 }
 
 export default function RandoPage() {
   const supabase = useMemo(() => getBrowserSupabase(), []);
-  const [queue, setQueue] = useState([]); // array of sentence objects
-  const [active, setActive] = useState(null); // { sentence, activatedAt }
-  const timerRef = useRef(null);
+  const [sentences, setSentences] = useState([]); // full ordered history, oldest first
+  const [now, setNow] = useState(() => Date.now());
 
-  // fetch initial history
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('sentences')
-          .select('*')
-          .order('created_at', { ascending: true })
-          .limit(1000);
-        if (error) {
-          console.error('supabase fetch error', error);
-          return;
-        }
-        if (!mounted) return;
-        if (!data || data.length === 0) {
-          setQueue([]);
-          setActive(null);
-          return;
-        }
-        // Make the first (oldest) active, rest queued
-        const [first, ...rest] = data;
-        setActive({ sentence: first, activatedAt: Date.now() });
-        setQueue(rest);
-      } catch (err) {
-        console.error(err);
-      }
-    })();
-    return () => { mounted = false; };
+  const fetchHistory = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('sentences')
+      .select('*')
+      .order('created_at', { ascending: true })
+      .limit(1000);
+    if (error) {
+      console.error('supabase fetch error', error);
+      return;
+    }
+    setSentences((prev) => mergeSentences(prev, data || []));
   }, [supabase]);
 
-  // subscribe to realtime inserts (dedupe + logs)
+  // initial history
   useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  // Subscribe to realtime inserts. A websocket push is the steady state, but
+  // pushes only cover events that arrive while the channel is actually
+  // connected — a drop (sleep, wifi blip, a backgrounded tab's heartbeat
+  // timing out) silently loses whatever was inserted during the gap unless
+  // we resync on reconnect. `hadDrop` tracks whether the channel has left
+  // SUBSCRIBED since we last resynced, so we only refetch when there's
+  // actually a gap to close, not on every push.
+  useEffect(() => {
+    const hadDrop = { current: false };
+
     const channel = supabase
       .channel('public:sentences')
       .on(
@@ -55,54 +69,52 @@ export default function RandoPage() {
         (payload) => {
           const row = payload?.new;
           if (!row) return;
-          const sentence = { id: row.id, text: row.text, created_at: row.created_at };
-          console.log('[REALTIME] insert received id=', sentence.id);
-
-          setQueue((prev) => {
-            // ignore if already active
-            if (active?.sentence?.id === sentence.id) {
-              console.log('[REALTIME] ignoring: already active id=', sentence.id);
-              return prev;
-            }
-            // ignore if already queued
-            if (prev.some((s) => s.id === sentence.id)) {
-              console.log('[REALTIME] ignoring duplicate id=', sentence.id);
-              return prev;
-            }
-            const next = [...prev, sentence];
-            console.log('[REALTIME] queued id=', sentence.id, 'newQueueLen=', next.length);
-            return next;
-          });
+          setSentences((prev) => mergeSentences(prev, [row]));
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          if (hadDrop.current) {
+            hadDrop.current = false;
+            fetchHistory();
+          }
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          hadDrop.current = true;
+        }
+      });
 
     return () => {
-      if (channel) supabase.removeChannel(channel);
+      supabase.removeChannel(channel);
     };
-  }, [supabase, active]);
+  }, [supabase, fetchHistory]);
 
-  // Activation / queue processing (per-item timeout)
+  // Safety net: the browser's own online/offline signal can beat the
+  // realtime heartbeat to detecting a drop, so resync there too.
   useEffect(() => {
-    console.log('[ACT] effect run; activeId=', active?.sentence?.id, 'activatedAt=', active?.activatedAt, 'queueLen=', queue.length);
+    window.addEventListener('online', fetchHistory);
+    return () => window.removeEventListener('online', fetchHistory);
+  }, [fetchHistory]);
 
-    // clear any existing timeout
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    // Poll every second to check transitions; this keeps logic simple and deterministic.
-    timerRef.current = setInterval(tryAdvance, 1000);
-    // Also run once immediately
-    tryAdvance(); 
+  // Shared clock tick. Forces a re-render every second so the derived active
+  // slot (below) is re-evaluated against the current wall clock — the same
+  // schedule + the same now means every client lands on the same sentence.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [active?.activatedAt, queue.length]);
+  const schedule = useMemo(() => computeSchedule(sentences), [sentences]);
+  let activeIndex = -1;
+  for (let i = 0; i < schedule.length; i++) {
+    if (schedule[i] <= now) activeIndex = i;
+    else break;
+  }
+  // Clock-skew guard: if this client's clock reads slightly behind the
+  // server's (so even the first slot looks like it hasn't started), still
+  // show the earliest pending sentence rather than a blank state.
+  if (activeIndex === -1 && sentences.length > 0) activeIndex = 0;
+  const active = activeIndex >= 0 ? sentences[activeIndex] : null;
+  const queueLength = sentences.length > 0 ? sentences.length - activeIndex - 1 : 0;
 
   // Submission
   const [input, setInput] = useState('');
@@ -127,7 +139,7 @@ export default function RandoPage() {
         setError(j.error || 'server_error');
       } else {
         setInput('');
-        // Do not push to queue here; rely on realtime subscription for canonical order
+        // Do not push to sentences here; rely on realtime subscription for canonical order
       }
     } catch (err) {
       console.error(err);
@@ -137,7 +149,7 @@ export default function RandoPage() {
     }
   }
 
-  const activeText = active ? active.sentence.text : '';
+  const activeText = active ? active.text : '';
 
   return (
     <div style={{ padding: 32, fontFamily: 'system-ui, sans-serif', color: '#111' }}>
@@ -166,7 +178,7 @@ export default function RandoPage() {
 
       <div style={{ marginTop: 12, color: '#666' }}>
         {error && <div style={{ color: 'crimson' }}>Error: {error}</div>}
-        <div>Queue length: {queue.length}</div>
+        <div>Queue length: {queueLength}</div>
         <div style={{ marginTop: 8 }}>Each sentence displays for a minimum of {MIN_DISPLAY_DURATION_MS / 1000} seconds.</div>
       </div>
     </div>
