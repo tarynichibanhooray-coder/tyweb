@@ -3,6 +3,7 @@ import { mount as stripMosaic } from './stripMosaic';
 import { mount as textOnPath } from './textOnPath';
 import { mount as depthDrift } from './depthDrift';
 import { mount as densityPortrait } from './densityPortrait';
+import { mount as ticker3d } from './ticker3d';
 
 // Order is the rotation order — index picked by day-of-epoch in DailyStyleText.
 export const STYLES = [
@@ -11,4 +12,5 @@ export const STYLES = [
   { name: 'text-on-path', mount: textOnPath },
   { name: 'depth-drift', mount: depthDrift },
   { name: 'density-portrait', mount: densityPortrait },
+  { name: 'ticker-3d', mount: ticker3d },
 ];
