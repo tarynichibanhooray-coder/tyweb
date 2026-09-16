@@ -8,7 +8,6 @@
 import { createNoise2D } from 'simplex-noise';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const H = 200;
 const CONTROL_COUNT = 6;
 const APPROX_CHAR_WIDTH_RATIO = 0.62; // rough average glyph width as a fraction of font-size
 
@@ -29,13 +28,19 @@ export function mount(el, text) {
   el.textContent = '';
   el.style.display = 'block';
   el.style.width = '100%';
+  el.style.height = '100%';
 
+  // Height comes from the actual container, not a fixed value — on a tall
+  // phone viewport the wrapping box is real vertical space (page.jsx gives
+  // it 70vh), so the curve should actually use it, not stay confined to a
+  // small fixed band regardless of screen size.
   let W = Math.max(240, el.getBoundingClientRect().width || 400);
+  let H = Math.max(200, el.getBoundingClientRect().height || 200);
 
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   svg.setAttribute('width', '100%');
-  svg.setAttribute('height', '200');
+  svg.setAttribute('height', '100%');
   svg.style.overflow = 'visible';
 
   const defs = document.createElementNS(SVG_NS, 'defs');
@@ -71,10 +76,12 @@ export function mount(el, text) {
   svg.appendChild(defs);
 
   // Fit the sentence to the actual available width instead of a fixed
-  // font-size — a long sentence on a narrow mobile box would otherwise
-  // run past the visible curve and get clipped by the container.
+  // font-size — sized to fill the width and slightly exceed it (>1.0),
+  // rather than sitting comfortably inside it, so it reads as a bold
+  // banner rather than a small caption. The path itself is widened to
+  // match, below.
   function fitFontSize(width) {
-    return Math.max(12, Math.min(22, (width * 0.85) / Math.max(1, text.length) / APPROX_CHAR_WIDTH_RATIO));
+    return Math.max(14, Math.min(32, (width * 1.15) / Math.max(1, text.length) / APPROX_CHAR_WIDTH_RATIO));
   }
 
   const textEl = document.createElementNS(SVG_NS, 'text');
@@ -92,6 +99,7 @@ export function mount(el, text) {
 
   function resize() {
     W = Math.max(240, el.getBoundingClientRect().width || 400);
+    H = Math.max(200, el.getBoundingClientRect().height || 200);
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     textEl.setAttribute('font-size', fitFontSize(W).toFixed(1));
   }
@@ -103,10 +111,18 @@ export function mount(el, text) {
 
   function tick(now) {
     const t = (now - start) / 1000;
+    // Spans a bit past both edges (-6%..106% of W), not exactly 0..W, so
+    // the curve — and the text riding it — visibly bleeds past the frame
+    // rather than sitting neatly inside it.
+    const xStart = W * -0.06;
+    const xEnd = W * 1.06;
     const pts = [];
     for (let i = 0; i <= CONTROL_COUNT; i++) {
-      const x = (W / CONTROL_COUNT) * i;
-      const y = H / 2 + noise(i * 0.8, t * 0.08) * 70;
+      const x = xStart + ((xEnd - xStart) / CONTROL_COUNT) * i;
+      // Amplitude scales with the actual available height instead of a
+      // fixed 70px, so on a tall phone viewport it really wanders through
+      // most of the vertical space rather than a small fixed band.
+      const y = H / 2 + noise(i * 0.8, t * 0.08) * (H * 0.4);
       pts.push([x, y]);
     }
     pathEl.setAttribute('d', smoothPathFromPoints(pts));
