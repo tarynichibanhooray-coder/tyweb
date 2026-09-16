@@ -208,8 +208,21 @@ export default function RandoPage() {
         />
       </div>
 
-      <div style={{ position: 'fixed', bottom: 40, left: 0, right: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 40,
+          left: 0,
+          right: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 10,
+          padding: '0 20px',
+          boxSizing: 'border-box',
+        }}
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'center' }}>
           {!showComposer ? (
             <button
               onClick={() => setShowComposer(true)}
