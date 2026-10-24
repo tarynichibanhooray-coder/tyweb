@@ -17,13 +17,18 @@ function mergeSentences(prev, incoming) {
 
 // Each sentence's on-screen start time: its own arrival, unless the previous
 // sentence's minimum-display slot hasn't ended yet — in which case it queues
-// behind it. Purely a function of the (shared) sentence list, so every client
-// computes the identical schedule without any per-client anchor.
-function computeSchedule(sentences) {
+// behind it. So a new sentence replaces one that has already had its minimum
+// time immediately. A function of the (shared) sentence list, so every client
+// computes the same schedule — except that created_at is capped at this
+// client's `now`: a sentence we've received has necessarily been created,
+// so if this device's clock runs behind the server's it must not hold the
+// new sentence back until the local clock "catches up".
+function computeSchedule(sentences, now) {
   const schedule = [];
   let prevEnd = -Infinity;
   for (const s of sentences) {
-    const start = Math.max(new Date(s.created_at).getTime(), prevEnd);
+    const created = Math.min(new Date(s.created_at).getTime(), now);
+    const start = Math.max(created, prevEnd);
     schedule.push(start);
     prevEnd = start + MIN_DISPLAY_DURATION_MS;
   }
@@ -72,6 +77,7 @@ export default function RandoPage() {
           const row = payload?.new;
           if (!row) return;
           setSentences((prev) => mergeSentences(prev, [row]));
+          setNow(Date.now()); // re-evaluate now, not on the next 1s tick
         }
       )
       .subscribe((status) => {
@@ -105,7 +111,7 @@ export default function RandoPage() {
     return () => clearInterval(id);
   }, []);
 
-  const schedule = useMemo(() => computeSchedule(sentences), [sentences]);
+  const schedule = useMemo(() => computeSchedule(sentences, now), [sentences, now]);
   let activeIndex = -1;
   for (let i = 0; i < schedule.length; i++) {
     if (schedule[i] <= now) activeIndex = i;
@@ -173,7 +179,11 @@ export default function RandoPage() {
         setError(j.error || 'server_error');
       } else {
         setInput('');
-        // Do not push to sentences here; rely on realtime subscription for canonical order
+        // Not pushed locally (realtime/the DB own the canonical row and
+        // created_at), but refetch right away so the submitter's own screen
+        // doesn't wait on the realtime push to show it.
+        await fetchHistory();
+        setNow(Date.now());
       }
     } catch (err) {
       console.error(err);
