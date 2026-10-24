@@ -1,27 +1,32 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { STYLES } from './textStyles';
+import { STYLE_ROTATION_MS } from '../lib/randoConfig';
 
-// UTC calendar day, not local time or load time — every viewer computes
-// the same index regardless of timezone or when they opened the page,
-// same shared-derivation principle as the sentence scheduling.
-function dailyStyleIndex(date = new Date()) {
-  const utcMidnight = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-  const dayNumber = Math.floor(utcMidnight / 86400000);
-  return dayNumber % STYLES.length;
+// Wall-clock slot, not time since page load — every viewer computes the
+// same index at the same moment, same shared-derivation principle as the
+// sentence scheduling. Slots cycle through STYLES in order.
+function styleIndexAt(now = Date.now()) {
+  return Math.floor(now / STYLE_ROTATION_MS) % STYLES.length;
 }
 
 export default function DailyStyleText({ text = '', className, style }) {
   const containerRef = useRef(null);
-  const [styleIndex, setStyleIndex] = useState(dailyStyleIndex);
+  const [styleIndex, setStyleIndex] = useState(() => styleIndexAt());
 
-  // Catch the rollover if the page is left open across a UTC midnight.
+  // Wake exactly at the next slot boundary rather than polling, so the
+  // switch lands on time.
   useEffect(() => {
-    const id = setInterval(() => {
-      const next = dailyStyleIndex();
-      setStyleIndex((prev) => (prev === next ? prev : next));
-    }, 60_000);
-    return () => clearInterval(id);
+    let id;
+    const schedule = () => {
+      const now = Date.now();
+      id = setTimeout(() => {
+        setStyleIndex(styleIndexAt());
+        schedule();
+      }, STYLE_ROTATION_MS - (now % STYLE_ROTATION_MS) + 50);
+    };
+    schedule();
+    return () => clearTimeout(id);
   }, []);
 
   useEffect(() => {
@@ -31,5 +36,8 @@ export default function DailyStyleText({ text = '', className, style }) {
     return cleanup;
   }, [text, styleIndex]);
 
-  return <div ref={containerRef} className={className} style={style} />;
+  // Keyed by style so each slot gets a fresh element — styles set inline
+  // CSS on their container (backgrounds, perspective, min-height) that
+  // would otherwise leak into the next style.
+  return <div key={styleIndex} ref={containerRef} className={className} style={style} />;
 }

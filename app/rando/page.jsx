@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getBrowserSupabase } from '../../lib/supabaseClient.browser';
 import { MIN_DISPLAY_DURATION_MS, MAX_SENTENCE_LENGTH } from '../../lib/randoConfig';
-import StyledText from '../../components/StyledText';
+import DailyStyleText from '../../components/DailyStyleText';
 import { detectLanguage, getStrings } from '../../lib/i18n';
 
 function mergeSentences(prev, incoming) {
@@ -201,9 +201,8 @@ export default function RandoPage() {
       }}
     >
       <div style={{ height: '70vh', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <StyledText
+        <DailyStyleText
           text={activeText || strings.emptyState}
-          styleName="text-on-path"
           style={{ fontSize: 'clamp(18px, 4vw, 48px)', textAlign: 'center' }}
         />
       </div>

@@ -49,6 +49,9 @@ export function mount(el, text) {
   el.style.backgroundImage = `url(${grainDataUrl()})`;
   el.style.backgroundBlendMode = 'overlay';
   el.style.backgroundSize = '128px 128px';
+  // Scraps now fly out at any angle, including up/down — clip at the
+  // container so a vertical exit can't briefly stretch the page.
+  el.style.overflow = 'hidden';
 
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('width', '0');
@@ -60,11 +63,14 @@ export function mount(el, text) {
 
   const chunks = chunkPhrase(text);
   const timelines = [];
-  // Every scrap exits via the exact same edge — a single shared direction,
-  // not per-scrap variance — so it reads as one gust sweeping all of them
-  // off together, rather than each drifting its own way.
-  const WIND_DIR = Math.random() < 0.5 ? 1 : -1; // 1 = off the right edge, -1 = off the left
+  // Each scrap picks a fresh random exit angle and a separate random
+  // re-entry angle on every cycle, so the fly-out/fly-in is never the same
+  // twice. OFFSCREEN_DIST is far enough along any angle to fully clear the
+  // container from anywhere inside it.
   const containerWidth = () => el.getBoundingClientRect().width || 600;
+  const containerHeight = () => el.getBoundingClientRect().height || 300;
+  const offscreenDist = () => containerWidth() + containerHeight() + 200;
+  const randomAngle = () => Math.random() * Math.PI * 2;
   // Shared by every scrap, not randomized per-scrap, so they depart and
   // return together instead of drifting out of sync over repeats.
   const FLIGHT_START_DELAY = 4; // comfortably after every scrap's entrance has finished
@@ -184,6 +190,7 @@ export function mount(el, text) {
     // Rotation snaps to 0 while still offscreen and invisible — not
     // animated — so there is never any spin visible during the return.
     let pendingTarget = { left, top };
+    let exitAngle = randomAngle();
     const departOffset = Math.random() * DEPART_STAGGER_MAX;
     const returnOffset = Math.random() * RETURN_STAGGER_MAX;
 
@@ -191,6 +198,9 @@ export function mount(el, text) {
       repeat: -1,
       delay: FLIGHT_START_DELAY,
       repeatDelay: HOLD_DURATION,
+      // Re-evaluate the function-based values (angles, spin) every cycle —
+      // without this GSAP records them once and replays the same flight.
+      repeatRefresh: true,
     });
     flightTl
       // Killed a beat before the sweep actually starts (not at the exact
@@ -200,6 +210,7 @@ export function mount(el, text) {
       // which was the small, sometimes-backwards flick right at departure.
       .call(() => {
         idleWobble.kill();
+        exitAngle = randomAngle();
         gsap.set(wrap, {
           x: ((pendingTarget.left - left) / 100) * containerWidth(),
           y: pendingTarget.top - top,
@@ -207,11 +218,10 @@ export function mount(el, text) {
         });
       }, null, Math.max(0, departOffset - 0.3))
       .to(wrap, {
-        // Pure horizontal sweep, same direction for every scrap, far
-        // enough past the container width to fully clear it regardless
-        // of this scrap's own starting position.
-        x: () => WIND_DIR * (containerWidth() + 200),
-        y: 0,
+        // Straight out along this cycle's random angle, far enough to
+        // fully clear the container from wherever the scrap is resting.
+        x: () => gsap.getProperty(wrap, 'x') + Math.cos(exitAngle) * offscreenDist(),
+        y: () => gsap.getProperty(wrap, 'y') + Math.sin(exitAngle) * offscreenDist(),
         rotate: () => `+=${180 + Math.random() * 180}`,
         duration: BLOW_DURATION,
         ease: 'power2.in',
@@ -221,11 +231,18 @@ export function mount(el, text) {
           left: 6 + Math.random() * 50,
           top: bandedTop(i, chunks.length, 12, maxTopEstimate),
         };
-        gsap.set(wrap, { rotate: 0 }); // upright again before it's ever visible on the way back
+        // Upright again, and moved offscreen along a new random angle
+        // relative to its landing spot, before it's ever visible again.
+        const entryAngle = randomAngle();
+        gsap.set(wrap, {
+          rotate: 0,
+          x: ((pendingTarget.left - left) / 100) * containerWidth() + Math.cos(entryAngle) * offscreenDist(),
+          y: pendingTarget.top - top + Math.sin(entryAngle) * offscreenDist(),
+        });
       }, null, ALL_GONE_AT)
       .to(wrap, {
-        // Re-enters from the same offscreen position it exited from,
-        // straight to the new spot — no rotate property, so nothing spins.
+        // Re-enters from that offscreen point straight to the new spot —
+        // no rotate property, so nothing spins.
         x: () => ((pendingTarget.left - left) / 100) * containerWidth(),
         y: () => pendingTarget.top - top,
         duration: RETURN_DURATION,

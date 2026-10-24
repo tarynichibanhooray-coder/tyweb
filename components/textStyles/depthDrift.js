@@ -101,7 +101,8 @@ export function mount(el, text) {
       const x = noise(i * 0.9 + 200, t) * 8;
       const y = noise(i * 0.9 + 400, t) * 6;
       const blur = (1 - depth01) * 5;
-      const scale = (0.4 + appear * 0.6) * (0.75 + depth01 * 0.45);
+      // Extra (1 + 0.1 * depth01): sharpest words up to 10% larger, blurriest unchanged.
+      const scale = (0.4 + appear * 0.6) * (0.75 + depth01 * 0.45) * (1 + depth01 * 0.1);
       const opacity = (0.22 + depth01 * 0.78) * appear;
       const glow = 2 + depth01 * 8;
 

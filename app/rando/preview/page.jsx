@@ -5,7 +5,7 @@ import StyledText from '../../../components/StyledText';
 import { STYLES } from '../../../components/textStyles';
 
 // Side-by-side comparison of all rotation styles at once. Not part of the
-// daily-rotation product page (/rando) — this is a review tool.
+// rotating product page (/rando) — this is a review tool.
 export default function RandoStylePreview() {
   const supabase = useMemo(() => getBrowserSupabase(), []);
   const [text, setText] = useState('The quick brown fox jumps');
@@ -25,8 +25,8 @@ export default function RandoStylePreview() {
     <div style={{ padding: 32, fontFamily: 'system-ui, sans-serif', color: '#111' }}>
       <h1>Rando style preview</h1>
       <p style={{ color: '#666' }}>
-        All five rotation styles shown at once, using the same sentence, for comparison.
-        In production (/rando) only one plays per day.
+        Every rotation style shown at once, using the same sentence, for comparison.
+        In production (/rando) they cycle, switching every 30 seconds.
       </p>
 
       {STYLES.map(({ name }) => (
