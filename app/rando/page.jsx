@@ -141,7 +141,7 @@ export default function RandoPage() {
   };
 
   async function handleShare() {
-    const shareData = { title: 'Rando', text: 'A shared, ever-changing sentence.', url: window.location.href };
+    const shareData = { title: 'Rando', text: strings.shareText, url: window.location.href };
     try {
       if (navigator.share) {
         await navigator.share(shareData);
