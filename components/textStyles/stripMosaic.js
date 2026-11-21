@@ -7,6 +7,7 @@
 // even though it's one source repeated.
 import gsap from 'gsap';
 import { grainDataUrl } from './util/noiseTexture';
+import { trackPointer } from './util/pointer';
 
 const TONES = ['#efe6d0', '#e3d5b8', '#d8cdb9', '#efe8dd', '#d3c7ad'];
 
@@ -54,11 +55,30 @@ export function mount(el, text) {
     strips[Math.floor(Math.random() * strips.length)].v *= -1;
   }
 
+  // Pointer interaction: the strip under the cursor/finger is dragged along
+  // with its horizontal movement, while the other strips slow almost to a
+  // stop, like a hand resting on the paper.
+  const pointer = trackPointer(el);
+  strips.forEach((s) => { s.boost = 0; });
+
   // Wrapping the offset by one sentence-period makes the loop seamless in
   // either direction (scrollLeft can't go negative on its own).
   const pan = (time, deltaMs) => {
+    const p = pointer.sample();
+    // Topmost strip containing the pointer (later strips overlap earlier).
+    let under = null;
+    if (p.presence > 0.01) {
+      strips.forEach((s) => {
+        if (p.y >= s.el.offsetTop && p.y <= s.el.offsetTop + s.el.offsetHeight) under = s;
+      });
+    }
     strips.forEach((s) => {
-      s.x = (((s.x + (s.v * deltaMs) / 1000) % s.period) + s.period) % s.period;
+      // Content moves right as scrollLeft drops, so follow the pointer with -vx.
+      const target = s === under ? -p.vx * 0.9 * p.presence : 0;
+      s.boost += (target - s.boost) * 0.15;
+      const slow = s === under ? 1 : 1 - 0.85 * p.presence;
+      const v = s.v * slow + s.boost;
+      s.x = (((s.x + (v * deltaMs) / 1000) % s.period) + s.period) % s.period;
       s.el.scrollLeft = s.x;
     });
   };
@@ -66,6 +86,7 @@ export function mount(el, text) {
 
   return () => {
     gsap.ticker.remove(pan);
+    pointer.dispose();
     el.textContent = '';
   };
 }

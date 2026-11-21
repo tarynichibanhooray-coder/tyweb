@@ -10,11 +10,13 @@
 // eye would land on a bright word out of sequence even though its
 // position was correct.
 import { createNoise2D } from 'simplex-noise';
+import { trackPointer } from './util/pointer';
 
 const STAGGER_MS = 260;
 const FADE_IN_MS = 550;
 const MARGIN_PCT = 14;
 const MS_PER_WORD_FOCUS = 1400; // how long the focus wave dwells on each word
+const POINTER_FOCUS_PX = 90; // radius of the pointer's focus pull
 
 function smoothstep(p) {
   return p * p * (3 - 2 * p);
@@ -62,6 +64,12 @@ export function mount(el, text) {
     return span;
   });
 
+  // Pointer interaction: the word nearest the cursor/finger takes over as
+  // the focus (sharp, larger) while the rest blur further; a tap jumps the
+  // focus wave to the tapped word so the sweep continues from there.
+  const pointer = trackPointer(el);
+  let focusOffset = 0;
+
   const start = performance.now();
   let raf = requestAnimationFrame(tick);
 
@@ -73,7 +81,22 @@ export function mount(el, text) {
     // Continuously advancing pointer into the word list — where the focus
     // wave currently sits. Wraps around and loops for as long as this
     // sentence stays on screen.
-    const focus = (elapsedMs / MS_PER_WORD_FOCUS) % n;
+    const p = pointer.sample();
+    const rect = el.getBoundingClientRect();
+    const centers = spans.map((_, i) => [
+      (positions[i][0] / 100) * rect.width + noise(i * 0.9 + 200, t) * 8,
+      (positions[i][1] / 100) * rect.height + noise(i * 0.9 + 400, t) * 6,
+    ]);
+    const tap = pointer.takeTap();
+    if (tap && n > 0) {
+      let nearest = 0;
+      centers.forEach(([cx, cy], i) => {
+        const [nx, ny] = centers[nearest];
+        if (Math.hypot(cx - tap.x, cy - tap.y) < Math.hypot(nx - tap.x, ny - tap.y)) nearest = i;
+      });
+      focusOffset = nearest - elapsedMs / MS_PER_WORD_FOCUS;
+    }
+    const focus = ((((elapsedMs / MS_PER_WORD_FOCUS) + focusOffset) % n) + n) % n;
 
     spans.forEach((span, i) => {
       // Pops in on its own turn, in sentence order.
@@ -96,13 +119,19 @@ export function mount(el, text) {
       // drift) so away from the sweep they still visibly differ from
       // each other, not just from the focused word.
       const ambient = (noise(i * 0.9, t * 0.4) + 1) / 2;
-      const depth01 = Math.max(focusGlow, ambient * 0.5);
+      const [cx, cy] = centers[i];
+      const pointerGlow = Math.exp(-(((cx - p.x) ** 2 + (cy - p.y) ** 2) / (2 * POINTER_FOCUS_PX ** 2)));
+      // While the pointer is present it replaces the sweep as the focus, and
+      // background words dim further so the focused one stands out.
+      const focusMix = focusGlow * (1 - p.presence) + pointerGlow * p.presence;
+      const depth01 = Math.max(focusMix, ambient * 0.5 * (1 - 0.6 * p.presence));
 
-      const x = noise(i * 0.9 + 200, t) * 8;
-      const y = noise(i * 0.9 + 400, t) * 6;
+      const x = cx - (positions[i][0] / 100) * rect.width;
+      const y = cy - (positions[i][1] / 100) * rect.height;
       const blur = (1 - depth01) * 5;
       // Extra (1 + 0.1 * depth01): sharpest words up to 10% larger, blurriest unchanged.
-      const scale = (0.4 + appear * 0.6) * (0.75 + depth01 * 0.45) * (1 + depth01 * 0.1);
+      const scale = (0.4 + appear * 0.6) * (0.75 + depth01 * 0.45) * (1 + depth01 * 0.1)
+        * (1 + pointerGlow * p.presence * 0.15); // pointer-focused word grows a little more
       const opacity = (0.22 + depth01 * 0.78) * appear;
       const glow = 2 + depth01 * 8;
 
@@ -116,6 +145,7 @@ export function mount(el, text) {
 
   return () => {
     cancelAnimationFrame(raf);
+    pointer.dispose();
     el.textContent = '';
   };
 }

@@ -5,8 +5,12 @@
 import * as flubber from 'flubber';
 import gsap from 'gsap';
 import { grainDataUrl } from './util/noiseTexture';
+import { trackPointer } from './util/pointer';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const PUSH_RADIUS_PX = 130; // scraps within this distance of the pointer get pushed
+const PUSH_MAX_PX = 45;
+const GUST_SPEED_PX_S = 1400; // a swipe faster than this blows nearby scraps off early
 
 function tornPath() {
   const stepsX = 5;
@@ -63,6 +67,7 @@ export function mount(el, text) {
 
   const chunks = chunkPhrase(text);
   const timelines = [];
+  const scraps = []; // per-scrap handles for the pointer interaction below
   // Each scrap picks a fresh random exit angle and a separate random
   // re-entry angle on every cycle, so the fly-out/fly-in is never the same
   // twice. OFFSCREEN_DIST is far enough along any angle to fully clear the
@@ -191,6 +196,7 @@ export function mount(el, text) {
     // animated — so there is never any spin visible during the return.
     let pendingTarget = { left, top };
     let exitAngle = randomAngle();
+    let forcedAngle = null; // set by a swipe: blow off along the swipe's direction
     const departOffset = Math.random() * DEPART_STAGGER_MAX;
     const returnOffset = Math.random() * RETURN_STAGGER_MAX;
 
@@ -210,7 +216,8 @@ export function mount(el, text) {
       // which was the small, sometimes-backwards flick right at departure.
       .call(() => {
         idleWobble.kill();
-        exitAngle = randomAngle();
+        exitAngle = forcedAngle ?? randomAngle();
+        forcedAngle = null;
         gsap.set(wrap, {
           x: ((pendingTarget.left - left) / 100) * containerWidth(),
           y: pendingTarget.top - top,
@@ -251,11 +258,54 @@ export function mount(el, text) {
       .call(() => { idleWobble = spawnIdleWobble(); });
 
     timelines.push(tl, flightTl);
+    scraps.push({
+      wrap,
+      push: { x: 0, y: 0 },
+      // Skip the rest of this scrap's landed hold so its next blow-off
+      // starts now, along the swipe's direction. Only while it's resting
+      // (not mid-flight, and not before its first cycle has begun).
+      blowToward(angle) {
+        const dur = flightTl.duration();
+        const cycle = dur + HOLD_DURATION;
+        const T = flightTl.totalTime();
+        const k = Math.floor(T / cycle);
+        if (T > 0 && T - k * cycle >= dur) {
+          forcedAngle = angle;
+          flightTl.totalTime((k + 1) * cycle - 0.01);
+        }
+      },
+    });
   });
+
+  // Pointer interaction: scraps near the cursor/finger are nudged away
+  // (via margins, so GSAP's own transforms are untouched) and settle back
+  // when it leaves; a fast swipe through them blows them off early.
+  const pointer = trackPointer(el);
+  const react = () => {
+    const p = pointer.sample();
+    const er = el.getBoundingClientRect();
+    scraps.forEach((sc) => {
+      const r = sc.wrap.getBoundingClientRect();
+      const cx = r.left - er.left + r.width / 2 - sc.push.x;
+      const cy = r.top - er.top + r.height / 2 - sc.push.y;
+      const dx = cx - p.x;
+      const dy = cy - p.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const f = Math.max(0, 1 - d / PUSH_RADIUS_PX) ** 2 * p.presence;
+      sc.push.x += ((dx / d) * f * PUSH_MAX_PX - sc.push.x) * 0.15;
+      sc.push.y += ((dy / d) * f * PUSH_MAX_PX - sc.push.y) * 0.15;
+      sc.wrap.style.marginLeft = `${sc.push.x.toFixed(1)}px`;
+      sc.wrap.style.marginTop = `${sc.push.y.toFixed(1)}px`;
+      if (p.speed > GUST_SPEED_PX_S && d < PUSH_RADIUS_PX) sc.blowToward(Math.atan2(p.vy, p.vx));
+    });
+  };
+  gsap.ticker.add(react);
 
   el.style.minHeight = `${Math.max(220, cursorY + rowHeight)}px`;
 
   return () => {
+    gsap.ticker.remove(react);
+    pointer.dispose();
     timelines.forEach((tl) => tl.kill());
     gsap.killTweensOf(el.querySelectorAll('div'));
     svg.remove();

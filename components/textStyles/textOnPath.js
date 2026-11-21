@@ -6,6 +6,7 @@
 // simplex-noise drives each control point continuously instead, and a
 // quadratic-through-midpoints pass turns the points into a smooth curve.
 import { createNoise2D } from 'simplex-noise';
+import { trackPointer } from './util/pointer';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CONTROL_COUNT = 6;
@@ -105,12 +106,22 @@ export function mount(el, text) {
   }
   window.addEventListener('resize', resize);
 
+  // Pointer interaction: the curve bends toward the cursor/finger like a
+  // magnet, and moving the pointer sideways slides the letters along it
+  // (then they ease back to their normal drift).
+  const pointer = trackPointer(el);
+  let slide = 0; // extra startOffset, in %
+  let lastNow = null;
+
   const noise = createNoise2D();
   const start = performance.now();
   let raf = requestAnimationFrame(tick);
 
   function tick(now) {
     const t = (now - start) / 1000;
+    const dt = lastNow === null ? 0 : Math.min(0.1, (now - lastNow) / 1000);
+    lastNow = now;
+    const p = pointer.sample();
     // Spans a bit past both edges (-6%..106% of W), not exactly 0..W, so
     // the curve — and the text riding it — visibly bleeds past the frame
     // rather than sitting neatly inside it.
@@ -122,12 +133,17 @@ export function mount(el, text) {
       // Amplitude scales with the actual available height instead of a
       // fixed 70px, so on a tall phone viewport it really wanders through
       // most of the vertical space rather than a small fixed band.
-      const y = H / 2 + noise(i * 0.8, t * 0.08) * (H * 0.4);
+      let y = H / 2 + noise(i * 0.8, t * 0.08) * (H * 0.4);
+      // Pulled toward the pointer, strongest for the points nearest it.
+      const pull = Math.exp(-((x - p.x) ** 2) / (2 * (W * 0.15) ** 2)) * p.presence;
+      y += (p.y - y) * pull * 0.8;
       pts.push([x, y]);
     }
     pathEl.setAttribute('d', smoothPathFromPoints(pts));
     // Drift the text's start offset slowly along the path too.
-    const offsetPct = 4 + (noise(50, t * 0.05) + 1) * 12;
+    slide = Math.max(-12, Math.min(25, slide + dt * p.vx * 0.03));
+    slide *= Math.exp(-dt / 1.5);
+    const offsetPct = Math.max(-4, 4 + (noise(50, t * 0.05) + 1) * 12 + slide);
     textPath.setAttribute('startOffset', `${offsetPct.toFixed(1)}%`);
 
     // Vacillating glow: irregular, not a clean sine — two noise samples at
@@ -143,6 +159,7 @@ export function mount(el, text) {
 
   return () => {
     cancelAnimationFrame(raf);
+    pointer.dispose();
     window.removeEventListener('resize', resize);
     el.textContent = '';
   };

@@ -3,6 +3,7 @@
 // Genuinely different from every other style here: this is the only one
 // using a real 3D engine (three.js) rather than SVG/canvas/CSS transforms.
 import * as THREE from 'three';
+import { trackPointer } from './util/pointer';
 
 const PALETTE = ['#ff4d8d', '#3fa7ff', '#39ff14'];
 
@@ -180,16 +181,41 @@ export function mount(el, text) {
   }
   window.addEventListener('resize', resize);
 
+  // Pointer interaction: dragging spins the spiral, and the spin carries on
+  // after release like a flick before easing back into the normal rotation.
+  // Pointer height tilts it a little. pan-y keeps vertical page scrolling
+  // working on touch while horizontal drags reach the spiral.
+  el.style.touchAction = 'pan-y';
+  const pointer = trackPointer(el);
+  let dragX = null;
+  let flick = 0; // extra rotation per frame from the last drag
+  let tilt = 0;
+
   let raf = requestAnimationFrame(tick);
   function tick() {
+    const p = pointer.sample();
+    if (p.down) {
+      if (dragX !== null) {
+        flick = (p.x - dragX) * 0.01;
+        ribbon.rotation.y += flick;
+      }
+      dragX = p.x;
+    } else {
+      dragX = null;
+      flick *= 0.95;
+      ribbon.rotation.y += flick;
+    }
     ribbon.rotation.y -= 0.006;
-    ribbon.rotation.x = Math.sin(Date.now() * 0.0004) * 0.15;
+    const targetTilt = (p.y / p.h - 0.5) * 0.5 * p.presence;
+    tilt += (targetTilt - tilt) * 0.08;
+    ribbon.rotation.x = Math.sin(Date.now() * 0.0004) * 0.15 + tilt;
     renderer.render(scene, camera);
     raf = requestAnimationFrame(tick);
   }
 
   return () => {
     cancelAnimationFrame(raf);
+    pointer.dispose();
     window.removeEventListener('resize', resize);
     geometry.dispose();
     materials.forEach((m) => m.dispose());

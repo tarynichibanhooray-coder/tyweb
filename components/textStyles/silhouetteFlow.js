@@ -8,6 +8,7 @@
 // column of characters keeps flowing downward at a slightly staggered
 // phase, so rows ripple but stay readable.
 import { createNoise2D } from 'simplex-noise';
+import { trackPointer } from './util/pointer';
 
 const HEIGHT = 520;
 const ACCENT = '#d0623a';
@@ -15,6 +16,9 @@ const FLOW_ROWS_PER_SEC = 1.1;
 const EDGE = 0.035; // band (in figure units) outside the silhouette where characters smear
 const POSE_HOLD_S = 4; // seconds each pose is held
 const POSE_MOVE_S = 2.5; // seconds to move into the next pose
+const DISTURB_PX = 90; // how far the pointer's disturbance reaches
+const DISTURB_PUSH_PX = 26; // max sideways push for characters right at the pointer
+const DISTURB_FALL_ROWS_PER_SEC = 6; // extra fall speed for columns under the pointer
 
 // Keyframe poses: elbow/hand and knee/ankle positions in figure units
 // (shoulders sit at x ±0.15, y 0.31; hips at x ±0.075, y 0.62).
@@ -196,6 +200,14 @@ export function mount(el, text) {
     return POSES[poseOrder[i]];
   };
 
+  // Pointer interaction: characters near the cursor/finger get pushed aside
+  // and their columns fall faster, like a hand in the stream; tapping her
+  // starts the move into the next pose right away.
+  const pointer = trackPointer(el);
+  const colBoost = []; // extra rows scrolled per column, accumulated
+  let poseShift = 0; // seconds the pose clock has been moved ahead by taps
+  let lastTick = null;
+
   const start = performance.now();
   let raf = requestAnimationFrame(tick);
 
@@ -203,6 +215,9 @@ export function mount(el, text) {
     // rAF timestamps can be slightly earlier than performance.now() at mount;
     // clamp so the first frame never computes a negative pose index.
     const tRaw = Math.max(0, (now - start) / 1000);
+    const dt = lastTick === null ? 0 : Math.min(0.1, (now - lastTick) / 1000);
+    lastTick = now;
+    const p = pointer.sample();
     const t = tRaw * 0.08;
     const w = Math.max(1, el.getBoundingClientRect().width);
     const h = HEIGHT;
@@ -221,28 +236,45 @@ export function mount(el, text) {
     // Hold a keyframe pose, then ease into the next; small noise drift on
     // spine, hips, head and hair keeps her alive while holding.
     const seg = POSE_HOLD_S + POSE_MOVE_S;
-    const segIndex = Math.floor(tRaw / seg);
-    const into = tRaw - segIndex * seg - POSE_HOLD_S;
-    const blend = into <= 0 ? 0 : smoothstep(into / POSE_MOVE_S);
-    const pose = {
+    const figScale = 0.92; // figure height as a fraction of the canvas
+    const figTop = (1 - figScale) / 2;
+    const poseClock = () => {
+      const pt = tRaw + poseShift;
+      const segIndex = Math.floor(pt / seg);
+      return { pt, segIndex, into: pt - segIndex * seg - POSE_HOLD_S };
+    };
+    const drift = {
       sway: noise(1, t) * 0.035,
       hip: noise(2, t) * 0.03,
       headX: noise(4, t) * 0.03,
       hair: noise(5, t * 1.3) * 0.07,
-      joints: lerpPose(poseAt(segIndex), poseAt(segIndex + 1), blend),
     };
-    const figScale = 0.92; // figure height as a fraction of the canvas
-    const figTop = (1 - figScale) / 2;
+    let { segIndex, into } = poseClock();
+    const tap = pointer.takeTap();
+    if (tap && into <= 0) {
+      // Only when holding (not mid-move), and only on her body.
+      const holding = { ...drift, joints: poseAt(segIndex) };
+      if (figure((tap.x - w / 2) / (h * figScale), (tap.y / h - figTop) / figScale, holding) < 0.02) {
+        poseShift += -into; // jump to the end of the hold: the move starts now
+        ({ segIndex, into } = poseClock());
+      }
+    }
+    const blend = into <= 0 ? 0 : smoothstep(into / POSE_MOVE_S);
+    const pose = { ...drift, joints: lerpPose(poseAt(segIndex), poseAt(segIndex + 1), blend) };
 
     for (let c = 0; c < cols; c++) {
       // Each column falls at the same speed but a staggered phase, so rows
       // ripple instead of moving as one rigid block.
       const stagger = (noise(c * 0.13, 50) + 1) * 0.45;
-      const scroll = tRaw * FLOW_ROWS_PER_SEC + stagger;
+      const cx = xPad + (c + 0.5) * cellW;
+      // Columns near the pointer fall faster; the extra distance is kept,
+      // so the stream just moves on rather than snapping back.
+      const colNear = Math.max(0, 1 - Math.abs(cx - p.x) / DISTURB_PX);
+      colBoost[c] = (colBoost[c] || 0) + dt * DISTURB_FALL_ROWS_PER_SEC * colNear * colNear * p.presence;
+      const scroll = tRaw * FLOW_ROWS_PER_SEC + stagger + colBoost[c];
       const frac = scroll % 1;
       const mirrored = c >= cols / 2;
       const cc = mirrored ? cols - 1 - c : c;
-      const cx = xPad + (c + 0.5) * cellW;
 
       for (let r = -1; r < rows; r++) {
         const y = (r + frac) * cellH;
@@ -258,19 +290,24 @@ export function mount(el, text) {
 
         const accentRow = ((k % 9) + 9) % 9 === 4;
         ctx.fillStyle = accentRow ? ACCENT : ink;
+        // Pushed sideways away from the pointer (drawing only — the
+        // silhouette test above uses the undisturbed position).
+        const near = Math.max(0, 1 - Math.hypot(cx - p.x, y - p.y) / DISTURB_PX);
+        const dx = Math.sign(cx - p.x || 1) * DISTURB_PUSH_PX * near * near * p.presence;
+        const drawX = cx + dx;
         if (d < EDGE) {
           // Smear: characters at the edge stretch vertically and fade, like
           // ink dragged along the contour.
           const e = 1 - d / EDGE;
           ctx.globalAlpha = 0.35 + 0.5 * (1 - e);
           ctx.save();
-          ctx.translate(cx, y);
+          ctx.translate(drawX, y);
           ctx.scale(1, 1 + e * 1.6);
           ctx.fillText(ch, 0, 0);
           ctx.restore();
         } else {
           ctx.globalAlpha = accentRow ? 0.9 : 0.85;
-          ctx.fillText(ch, cx, y);
+          ctx.fillText(ch, drawX, y);
         }
       }
     }
@@ -280,6 +317,7 @@ export function mount(el, text) {
 
   return () => {
     cancelAnimationFrame(raf);
+    pointer.dispose();
     window.removeEventListener('resize', resize);
     el.textContent = '';
   };

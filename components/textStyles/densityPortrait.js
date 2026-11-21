@@ -6,6 +6,9 @@
 // sentence's own words, denser and larger where the noise peaks, sparse
 // and faint in the troughs, continuously drifting.
 import { createNoise2D } from 'simplex-noise';
+import { trackPointer } from './util/pointer';
+
+const HOLE_RADIUS_PX = 80; // words inside this distance of the pointer shrink and fade
 
 export function mount(el, text) {
   el.textContent = '';
@@ -35,6 +38,12 @@ export function mount(el, text) {
   resize();
   window.addEventListener('resize', resize);
 
+  // Pointer interaction: a clear hole opens where the cursor/finger is.
+  // The hole's centre trails the pointer, so words fill back in behind it.
+  const pointer = trackPointer(el);
+  const hole = { x: 0, y: 0, placed: false };
+  let lastTick = performance.now();
+
   const start = performance.now();
   let raf = requestAnimationFrame(tick);
 
@@ -45,6 +54,18 @@ export function mount(el, text) {
     const w = Math.max(1, rect.width);
     const h = 260;
     ctx.clearRect(0, 0, w, h);
+
+    const p = pointer.sample();
+    const dt = Math.min(100, now - lastTick) / 1000;
+    lastTick = now;
+    if (!hole.placed && p.presence > 0) {
+      hole.x = p.x;
+      hole.y = p.y;
+      hole.placed = true;
+    }
+    const follow = 1 - Math.exp(-dt * 7);
+    hole.x += (p.x - hole.x) * follow;
+    hole.y += (p.y - hole.y) * follow;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#39ff14';
@@ -85,10 +106,13 @@ export function mount(el, text) {
         // background noise, and only the brightest cells read strongly —
         // normalized against the current passing range, not raw brightness.
         const norm = (brightness - threshold) / (1 - threshold);
-        ctx.globalAlpha = 0.06 + Math.pow(norm, 1.6) * 0.94;
-        ctx.font = `${size.toFixed(1)}px system-ui, sans-serif`;
         const x = (c + 0.5) * (w / cols);
         const y = (r + 0.5) * (h / rows);
+        const d = Math.hypot(x - hole.x, y - hole.y) / HOLE_RADIUS_PX;
+        const clear = p.presence * (d < 1 ? 1 - d * d * (3 - 2 * d) : 0); // smooth edge
+        if (clear > 0.97) continue;
+        ctx.globalAlpha = (0.06 + Math.pow(norm, 1.6) * 0.94) * (1 - clear);
+        ctx.font = `${(size * (1 - clear * 0.7)).toFixed(1)}px system-ui, sans-serif`;
         ctx.fillText(word, x, y);
       }
     }
@@ -98,6 +122,7 @@ export function mount(el, text) {
 
   return () => {
     cancelAnimationFrame(raf);
+    pointer.dispose();
     window.removeEventListener('resize', resize);
     el.textContent = '';
   };
